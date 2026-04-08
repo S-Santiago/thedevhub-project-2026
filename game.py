@@ -11,22 +11,30 @@ from settings import (
 )
 
 from map_generator import generate_map
+from map_manager import MapManager
 from asset_manager import load_images
 from renderer import render_frame
 from input_handler import process_event
+from logic.conveyor import ConveyorSystem, ConveyorBelt
+from enums import Direction
+from enum import Enum
 
 
 def run():
     if platform.system() == "Windows":
         import ctypes
-        
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID) # ID de la app. para que el sistema operativo la reconozca correctamente
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
 
     pygame.init()
-    pygame.display.set_caption(APP_NAME) # Nombre de la ventana
+    pygame.display.set_caption(APP_NAME)
 
-    gameIcon = pygame.image.load(f"{ASSETS_PATH}/icon.png") # Icono de la ventana
-    pygame.display.set_icon(gameIcon)
+    # Intentar cargar el icono si existe (no crítico)
+    try:
+        game_icon = pygame.image.load(f"{ASSETS_PATH}/icon.png")
+        pygame.display.set_icon(game_icon)
+    except Exception:
+        pass
 
     # Configuración de pantalla
     screens = pygame.display.get_desktop_sizes()
@@ -58,9 +66,21 @@ def run():
 
     clock = pygame.time.Clock()
 
-    # Carga de datos
-    tiles, seed = generate_map()
-    imagenes = load_images(tile_size)
+    # Carga de datos (ahora por chunks)
+    map_manager = MapManager()
+    images = load_images(tile_size)
+    
+    # Inicializar el sistema de cintas
+    conveyor_system = ConveyorSystem()
+    
+    # --------- CINTAS DE PRUEBA --------------------------------
+    conveyor_system.add_belt(ConveyorBelt(5, 5, Direction.RIGHT))
+    conveyor_system.add_belt(ConveyorBelt(6, 5, Direction.RIGHT))
+    conveyor_system.place_material(5, 5, "IRON")
+
+    # Asegurar chunks iniciales centrados en la vista actual
+    map_manager.ensure_chunks_for_view(offset_x, offset_y, tile_size, window_width, window_height)
+    tiles = map_manager.get_merged_tiles()
 
     state = {
         "is_dragging": False,
@@ -76,6 +96,8 @@ def run():
         "min_window_width": min_window_width,
         "min_window_height": min_window_height,
     }
+    
+    dt = 0.0
 
     while state["running"]:
         for event in pygame.event.get():
@@ -88,10 +110,13 @@ def run():
                 flags,
                 display_idx,
                 screen,
+                map_manager,
             )
 
             if new_images is not None:
-                imagenes = new_images
+                images = new_images
+
+        conveyor_system.update(dt)
 
         # Preparar información de debug
         mx, my = pygame.mouse.get_pos()
@@ -101,7 +126,10 @@ def run():
         ty = None
         tile_under = None
 
-        if 0 <= wx < state["map_pixel_size"] and 0 <= wy < state["map_pixel_size"]:
+        # Obtener tiles cacheadas (la generación ahora se dispara desde input_handler en MOUSEMOTION)
+        tiles = map_manager.get_merged_tiles()
+
+        if wx is not None and wy is not None:
             tx = int(wx // state["tile_size"])
             ty = int(wy // state["tile_size"])
             tile_under = tiles.get((tx, ty))
@@ -112,19 +140,20 @@ def run():
             "mouse_world": (wx, wy),
             "tile": (tx, ty),
             "tile_data": tile_under,
-            "seed": seed,
+            "seed": map_manager.base_seed,
         }
 
         render_frame(
             screen,
             tiles,
-            imagenes,
+            images,
             state["tile_size"],
             state["offset_x"],
             state["offset_y"],
             debug_info,
+            conveyor_system
         )
 
-        clock.tick(USER_OPTIONS["fps"])
+        dt = clock.tick(USER_OPTIONS["fps"]) / 1000.0
 
     pygame.quit()

@@ -1,3 +1,17 @@
+__pycache__/
+*.pyc
+.env
+.venv
+.vscode/
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+*.swp
+Thumbs.db
+.DS_Store
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

@@ -1,7 +1,7 @@
 import pygame
 
 
-def process_event(event: pygame.event.Event, state: dict, load_images: callable, MIN_TILE_SIZE: int, MAP_SIZE: int, flags, display_idx, screen):
+def process_event(event: pygame.event.Event, state: dict, load_images: callable, MIN_TILE_SIZE: int, MAP_SIZE: int, flags, display_idx, screen, map_manager=None):
     # Se asume que `state` es un diccionario y se muta en sitio
     if event.type == pygame.QUIT:
         state["running"] = False
@@ -29,6 +29,9 @@ def process_event(event: pygame.event.Event, state: dict, load_images: callable,
             state["offset_x"] += dx
             state["offset_y"] += dy
             state["last_mouse_pos"] = event.pos
+        # En cada movimiento del ratón, garantizar y podar chunks según la nueva vista (si se proporcionó map_manager)
+        if map_manager is not None:
+            map_manager.ensure_and_prune_for_view(state["offset_x"], state["offset_y"], state["tile_size"], state["window_width"], state["window_height"])
         return screen, None
 
     if event.type == pygame.MOUSEWHEEL:
@@ -58,6 +61,9 @@ def process_event(event: pygame.event.Event, state: dict, load_images: callable,
                 state["offset_y"] = (state["window_height"] - state["map_pixel_size"]) // 2
                 screen = pygame.display.set_mode((state["window_width"], state["window_height"]), flags, display=display_idx)
 
+            # Después de hacer zoom, puede que necesitemos generar/podar chunks si hay map_manager
+            if map_manager is not None:
+                map_manager.ensure_and_prune_for_view(state["offset_x"], state["offset_y"], state["tile_size"], state["window_width"], state["window_height"])
             return screen, imagenes
 
     if event.type == pygame.VIDEORESIZE:
