@@ -1,4 +1,3 @@
-from settings import MATERIALS  # diccionario de materiales definido en settings.py
 from typing import Optional      # permite indicar que un valor puede ser de un tipo o None
 
 
@@ -10,7 +9,7 @@ class MaterialsMov:
 
     def __repr__(self) -> str:
         # lo que se muestra al hacer print(), ej: "Material: IRON, Progress: 0.75%"
-        return f"Material: {self.kind}, Progress: {self.progress:.2f}%"
+        return f"Material: {self.kind}, Progress: {self.progress * 100:.2f}%"
 
 
 # Una celda de cinta transportadora en el grid
@@ -20,7 +19,7 @@ class ConveyorBelt:
         self.y         : int          = y          # fila en el grid
         self.direction                = direction  # direccion a la que apunta (enum Direction)
         self.speed     : float        = speed      # velocidad de transporte (1.0 = 1 segundo por celda)
-        self.item      : MaterialsMov = None       # material que lleva ahora mismo, None si esta vacia
+        self.item      : Optional[MaterialsMov] = None       # material que lleva ahora mismo, None si esta vacia
         self.is_empty  : bool         = True       # True si no lleva ningun material
 
     def update(self, delta_time: float, system) -> None:

@@ -6,18 +6,19 @@ from settings import (
     APP_NAME,
     MAP_SIZE,
     MIN_TILE_SIZE,
+    CAMERA_SPEED,
     USER_OPTIONS,
     ASSETS_PATH,
 )
 
-from map_generator import generate_map
+from build_system import MACHINE_CONVEYOR
 from map_manager import MapManager
 from asset_manager import load_images
 from renderer import render_frame
 from input_handler import process_event
-from logic.conveyor import ConveyorSystem, ConveyorBelt
+from logic.conveyor import ConveyorSystem
+from logic.drill_system import DrillSystem
 from enums import Direction
-from enum import Enum
 
 
 def run():
@@ -72,22 +73,18 @@ def run():
     
     # Inicializar el sistema de cintas
     conveyor_system = ConveyorSystem()
-    
-    # --------- CINTAS DE PRUEBA --------------------------------
-    conveyor_system.add_belt(ConveyorBelt(5, 5, Direction.RIGHT))
-    conveyor_system.add_belt(ConveyorBelt(6, 5, Direction.RIGHT))
-    conveyor_system.place_material(5, 5, "IRON")
+    drill_system = DrillSystem()
 
     # Asegurar chunks iniciales centrados en la vista actual
     map_manager.ensure_chunks_for_view(offset_x, offset_y, tile_size, window_width, window_height)
     tiles = map_manager.get_merged_tiles()
 
     state = {
-        "is_dragging": False,
-        "last_mouse_pos": (0, 0),
         "running": True,
         "offset_x": offset_x,
         "offset_y": offset_y,
+        "offset_x_f": float(offset_x),
+        "offset_y_f": float(offset_y),
         "tile_size": tile_size,
         "window_width": window_width,
         "window_height": window_height,
@@ -95,6 +92,9 @@ def run():
         "baseline_map_pixel_size": baseline_map_pixel_size,
         "min_window_width": min_window_width,
         "min_window_height": min_window_height,
+        "camera_speed": CAMERA_SPEED,
+        "selected_machine": MACHINE_CONVEYOR,
+        "selected_direction": Direction.RIGHT,
     }
     
     dt = 0.0
@@ -111,12 +111,43 @@ def run():
                 display_idx,
                 screen,
                 map_manager,
+                conveyor_system,
+                drill_system,
             )
 
             if new_images is not None:
                 images = new_images
 
+        keys = pygame.key.get_pressed()
+        move_x = 0
+        move_y = 0
+
+        # Se mueve la cámara, no el cursor: A/W/S/D desplazan el mundo.
+        if keys[pygame.K_a]:
+            move_x += 1
+        if keys[pygame.K_d]:
+            move_x -= 1
+        if keys[pygame.K_w]:
+            move_y += 1
+        if keys[pygame.K_s]:
+            move_y -= 1
+
+        if move_x != 0 or move_y != 0:
+            state["offset_x_f"] += move_x * state["camera_speed"] * dt
+            state["offset_y_f"] += move_y * state["camera_speed"] * dt
+            state["offset_x"] = int(state["offset_x_f"])
+            state["offset_y"] = int(state["offset_y_f"])
+
+            map_manager.ensure_and_prune_for_view(
+                state["offset_x"],
+                state["offset_y"],
+                state["tile_size"],
+                state["window_width"],
+                state["window_height"],
+            )
+
         conveyor_system.update(dt)
+        drill_system.update(dt, conveyor_system)
 
         # Preparar información de debug
         mx, my = pygame.mouse.get_pos()
@@ -126,7 +157,7 @@ def run():
         ty = None
         tile_under = None
 
-        # Obtener tiles cacheadas (la generación ahora se dispara desde input_handler en MOUSEMOTION)
+        # Obtener tiles cacheadas (la generación se dispara al mover cámara, zoom y resize)
         tiles = map_manager.get_merged_tiles()
 
         if wx is not None and wy is not None:
@@ -141,6 +172,10 @@ def run():
             "tile": (tx, ty),
             "tile_data": tile_under,
             "seed": map_manager.base_seed,
+            "selected_machine": state.get("selected_machine"),
+            "selected_direction": getattr(state.get("selected_direction"), "name", None),
+            "belts": len(conveyor_system._grid),
+            "drills": len(drill_system._grid),
         }
 
         render_frame(
@@ -151,7 +186,8 @@ def run():
             state["offset_x"],
             state["offset_y"],
             debug_info,
-            conveyor_system
+            conveyor_system,
+            drill_system,
         )
 
         dt = clock.tick(USER_OPTIONS["fps"]) / 1000.0

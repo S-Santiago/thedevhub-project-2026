@@ -1,37 +1,81 @@
 import pygame
 
+from build_system import (
+    MACHINE_CONVEYOR,
+    MACHINE_DRILL,
+    place_selected_machine,
+    rotate_machine_direction,
+    screen_to_tile,
+)
+from enums import Direction
 
-def process_event(event: pygame.event.Event, state: dict, load_images: callable, MIN_TILE_SIZE: int, MAP_SIZE: int, flags, display_idx, screen, map_manager=None):
+
+def process_event(
+    event: pygame.event.Event,
+    state: dict,
+    load_images: callable,
+    MIN_TILE_SIZE: int,
+    MAP_SIZE: int,
+    flags,
+    display_idx,
+    screen,
+    map_manager=None,
+    conveyor_system=None,
+    drill_system=None,
+):
     # Se asume que `state` es un diccionario y se muta en sitio
     if event.type == pygame.QUIT:
         state["running"] = False
         return screen, None
 
-    if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-        state["running"] = False
-        return screen, None
+    if event.type == pygame.KEYDOWN:
+        if event.key == pygame.K_ESCAPE:
+            state["running"] = False
+            return screen, None
 
-    if event.type == pygame.MOUSEBUTTONDOWN:
-        if event.button == 1:
-            state["is_dragging"] = True
-            state["last_mouse_pos"] = event.pos
-        return screen, None
+        # Seleccion de maquina (por ahora solo conveyor)
+        if event.key == pygame.K_1:
+            state["selected_machine"] = MACHINE_CONVEYOR
+            return screen, None
 
-    if event.type == pygame.MOUSEBUTTONUP:
-        if event.button == 1:
-            state["is_dragging"] = False
-        return screen, None
+        # Deseleccionar para navegar sin construir
+        if event.key == pygame.K_0:
+            state["selected_machine"] = None
+            return screen, None
 
-    if event.type == pygame.MOUSEMOTION:
-        if state.get("is_dragging"):
-            dx = event.pos[0] - state.get("last_mouse_pos", (0, 0))[0]
-            dy = event.pos[1] - state.get("last_mouse_pos", (0, 0))[1]
-            state["offset_x"] += dx
-            state["offset_y"] += dy
-            state["last_mouse_pos"] = event.pos
-        # En cada movimiento del ratón, garantizar y podar chunks según la nueva vista (si se proporcionó map_manager)
-        if map_manager is not None:
-            map_manager.ensure_and_prune_for_view(state["offset_x"], state["offset_y"], state["tile_size"], state["window_width"], state["window_height"])
+        if event.key == pygame.K_2:
+            state["selected_machine"] = MACHINE_DRILL
+            return screen, None
+
+        # Rotar direccion de colocacion
+        if event.key == pygame.K_r:
+            current_direction = state.get("selected_direction", Direction.RIGHT)
+            state["selected_direction"] = rotate_machine_direction(current_direction)
+            return screen, None
+
+    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        # Clic izquierdo para construir cuando hay maquina seleccionada
+        selected_machine = state.get("selected_machine")
+
+        if selected_machine and map_manager is not None and conveyor_system is not None:
+            tile_x, tile_y = screen_to_tile(
+                event.pos,
+                state["offset_x"],
+                state["offset_y"],
+                state["tile_size"],
+            )
+
+            selected_direction = state.get("selected_direction", Direction.RIGHT)
+            place_selected_machine(
+                map_manager,
+                conveyor_system,
+                tile_x,
+                tile_y,
+                selected_machine,
+                selected_direction,
+                drill_system,
+            )
+
         return screen, None
 
     if event.type == pygame.MOUSEWHEEL:
@@ -49,6 +93,8 @@ def process_event(event: pygame.event.Event, state: dict, load_images: callable,
             scale = new_tile_size / state["tile_size"]
             state["offset_x"] = mouse_x - (map_x * scale)
             state["offset_y"] = mouse_y - (map_y * scale)
+            state["offset_x_f"] = float(state["offset_x"])
+            state["offset_y_f"] = float(state["offset_y"])
 
             state["tile_size"] = new_tile_size
             imagenes = load_images(new_tile_size)
@@ -59,6 +105,8 @@ def process_event(event: pygame.event.Event, state: dict, load_images: callable,
                 state["window_height"] = max(state["window_height"], state["min_window_height"])
                 state["offset_x"] = (state["window_width"] - state["map_pixel_size"]) // 2
                 state["offset_y"] = (state["window_height"] - state["map_pixel_size"]) // 2
+                state["offset_x_f"] = float(state["offset_x"])
+                state["offset_y_f"] = float(state["offset_y"])
                 screen = pygame.display.set_mode((state["window_width"], state["window_height"]), flags, display=display_idx)
 
             # Después de hacer zoom, puede que necesitemos generar/podar chunks si hay map_manager
@@ -78,7 +126,12 @@ def process_event(event: pygame.event.Event, state: dict, load_images: callable,
         state["window_height"] = int(new_h)
         state["offset_x"] = (state["window_width"] - state["map_pixel_size"]) // 2
         state["offset_y"] = (state["window_height"] - state["map_pixel_size"]) // 2
+        state["offset_x_f"] = float(state["offset_x"])
+        state["offset_y_f"] = float(state["offset_y"])
         screen = pygame.display.set_mode((state["window_width"], state["window_height"]), flags, display=display_idx)
+
+        if map_manager is not None:
+            map_manager.ensure_and_prune_for_view(state["offset_x"], state["offset_y"], state["tile_size"], state["window_width"], state["window_height"])
 
         return screen, None
 

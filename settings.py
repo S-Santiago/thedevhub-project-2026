@@ -24,6 +24,11 @@ MAP_SIZE = 20
 ASSETS_PATH = "./assets/"
 MIN_TILE_SIZE = 32
 
+# Gameplay tuning
+CAMERA_SPEED = 600.0
+DRILL_DEFAULT_CYCLE_SECONDS = 1.5
+DRILL_OUTPUT_BUFFER_CAPACITY = 3
+
 # Chunked map settings
 CHUNK_SIZE = 32
 # Cuántos chunks extra cargar alrededor de la vista (margen)
