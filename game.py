@@ -165,6 +165,15 @@ def run():
             ty = int(wy // state["tile_size"])
             tile_under = tiles.get((tx, ty))
 
+        # Calcular previsualización: si hay una máquina seleccionada y un tile bajo el cursor,
+        # indicamos si es posible colocar ahí según las reglas de MapManager.
+        preview = None
+        sel_machine = state.get("selected_machine")
+        sel_direction = state.get("selected_direction")
+        if sel_machine is not None and tx is not None and ty is not None:
+            can_place = map_manager.can_place_machine(tx, ty)
+            preview = {"tile": (tx, ty), "machine": sel_machine, "direction": sel_direction, "can_place": can_place}
+
         debug_info = {
             "fps": round(clock.get_fps(), 1),
             "mouse_screen": (mx, my),
@@ -173,9 +182,10 @@ def run():
             "tile_data": tile_under,
             "seed": map_manager.base_seed,
             "selected_machine": state.get("selected_machine"),
-            "selected_direction": getattr(state.get("selected_direction"), "name", None),
+            "selected_direction": state.get("selected_direction"),
             "belts": len(conveyor_system._grid),
             "drills": len(drill_system._grid),
+            "preview": preview,
         }
 
         render_frame(
@@ -188,6 +198,7 @@ def run():
             debug_info,
             conveyor_system,
             drill_system,
+            state.get("context_menu"),
         )
 
         dt = clock.tick(USER_OPTIONS["fps"]) / 1000.0

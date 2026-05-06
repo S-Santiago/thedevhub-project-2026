@@ -22,6 +22,15 @@ def rotate_machine_direction(direction):
     return _DIRECTION_ORDER[(index + 1) % len(_DIRECTION_ORDER)]
 
 
+def rotate_machine_direction_ccw(direction):
+    """Return the next counter-clockwise direction for machine placement."""
+    if direction not in _DIRECTION_ORDER:
+        return Direction.RIGHT
+
+    index = _DIRECTION_ORDER.index(direction)
+    return _DIRECTION_ORDER[(index - 1) % len(_DIRECTION_ORDER)]
+
+
 def rotate_conveyor_direction(direction):
     """Backward-compatible alias."""
     return rotate_machine_direction(direction)
