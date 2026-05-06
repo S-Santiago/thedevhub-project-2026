@@ -47,15 +47,40 @@ def render_frame(
             pos_x = offset_x + (cx * tile_size)
             pos_y = offset_y + (cy * tile_size)
             
-            # Dibujar la cinta: preferir asset por dirección (CONVEYOR_UP/RIGHT/...),
-            # luego fallback a CONVEYOR genérico, y finalmente dibujar rect si no hay assets.
-            dir_key = f"CONVEYOR_{belt.direction.name}"
-            if dir_key in images and images[dir_key] is not None:
-                screen.blit(images[dir_key], (pos_x, pos_y))
-            elif "CONVEYOR" in images and images["CONVEYOR"] is not None:
-                screen.blit(images["CONVEYOR"], (pos_x, pos_y))
+            # Dibujar la cinta: preferir `variant` persistente (CONVEYOR_FROM-TO),
+            # luego intentar detectar FROM-TO en tiempo real, luego por dirección única
+            # y finalmente fallback genérico.
+            variant_key = getattr(belt, "variant", None)
+            if variant_key and variant_key in images and images[variant_key] is not None:
+                screen.blit(images[variant_key], (pos_x, pos_y))
             else:
-                pygame.draw.rect(screen, (100, 100, 100), (pos_x, pos_y, tile_size, tile_size), 2)
+                incoming = None
+                try:
+                    for d in Direction:
+                        nx = cx - d.value[0]
+                        ny = cy - d.value[1]
+                        nb = conveyor_system.get_belt(nx, ny)
+                        if nb is not None and getattr(nb, "direction", None) == d:
+                            incoming = d
+                            break
+                except Exception:
+                    incoming = None
+
+                used = False
+                if incoming is not None:
+                    combo_key = f"CONVEYOR_{incoming.name}-{belt.direction.name}"
+                    if combo_key in images and images[combo_key] is not None:
+                        screen.blit(images[combo_key], (pos_x, pos_y))
+                        used = True
+
+                if not used:
+                    dir_key = f"CONVEYOR_{belt.direction.name}"
+                    if dir_key in images and images[dir_key] is not None:
+                        screen.blit(images[dir_key], (pos_x, pos_y))
+                    elif "CONVEYOR" in images and images["CONVEYOR"] is not None:
+                        screen.blit(images["CONVEYOR"], (pos_x, pos_y))
+                    else:
+                        pygame.draw.rect(screen, (100, 100, 100), (pos_x, pos_y, tile_size, tile_size), 2)
             
             # Dibujar el material moviéndose encima de la cinta
             if belt.item is not None:
@@ -119,12 +144,50 @@ def render_frame(
                         dir_letter = letter_map.get(dir_name, None)
 
                     if p_machine == MACHINE_CONVEYOR or p_machine == "CONVEYOR":
-                        dir_name = getattr(p_dir, "name", None) if p_dir is not None else None
-                        dir_key = f"CONVEYOR_{dir_name}" if dir_name else "CONVEYOR"
-                        if dir_key in images and images[dir_key] is not None:
-                            surf = images[dir_key].copy()
+                        # Intentar usar asset FROM-TO para la previsualización si es aplicable
+                        incoming = None
+                        try:
+                            if conveyor_system is not None:
+                                for d in Direction:
+                                    nx = p_tile[0] - d.value[0]
+                                    ny = p_tile[1] - d.value[1]
+                                    nb = conveyor_system.get_belt(nx, ny)
+                                    if nb is not None and getattr(nb, "direction", None) == d:
+                                        incoming = d
+                                        break
+                        except Exception:
+                            incoming = None
+
+                        surf = None
+                        if incoming is not None and p_dir is not None:
+                            combo_key = f"CONVEYOR_{incoming.name}-{p_dir.name}"
+                            if combo_key in images and images[combo_key] is not None:
+                                surf = images[combo_key].copy()
+
+                        if surf is None:
+                            dir_name = getattr(p_dir, "name", None) if p_dir is not None else None
+                            dir_key = f"CONVEYOR_{dir_name}" if dir_name else "CONVEYOR"
+                            if dir_key in images and images[dir_key] is not None:
+                                surf = images[dir_key].copy()
+                            elif "CONVEYOR" in images and images["CONVEYOR"] is not None:
+                                surf = images["CONVEYOR"].copy()
+                            else:
+                                s = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
+                                color = (0, 200, 0, 90) if can_place else (200, 0, 0, 90)
+                                s.fill(color)
+                                if dir_letter:
+                                    try:
+                                        font = pygame.font.SysFont(None, max(12, int(tile_size * 0.5)))
+                                        text_s = font.render(dir_letter, True, (255, 255, 255))
+                                        tx = (s.get_width() - text_s.get_width()) // 2
+                                        ty = (s.get_height() - text_s.get_height()) // 2
+                                        s.blit(text_s, (tx, ty))
+                                    except Exception:
+                                        pass
+                                screen.blit(s, (px, py))
+
+                        if surf is not None:
                             surf.set_alpha(160 if can_place else 100)
-                            # Dibujar letra cardinal encima de la previsualización
                             if dir_letter:
                                 try:
                                     font = pygame.font.SysFont(None, max(12, int(tile_size * 0.5)))
@@ -135,33 +198,6 @@ def render_frame(
                                 except Exception:
                                     pass
                             screen.blit(surf, (px, py))
-                        elif "CONVEYOR" in images and images["CONVEYOR"] is not None:
-                            surf = images["CONVEYOR"].copy()
-                            surf.set_alpha(160 if can_place else 100)
-                            if dir_letter:
-                                try:
-                                    font = pygame.font.SysFont(None, max(12, int(tile_size * 0.5)))
-                                    text_s = font.render(dir_letter, True, (255, 255, 255))
-                                    tx = (surf.get_width() - text_s.get_width()) // 2
-                                    ty = (surf.get_height() - text_s.get_height()) // 2
-                                    surf.blit(text_s, (tx, ty))
-                                except Exception:
-                                    pass
-                            screen.blit(surf, (px, py))
-                        else:
-                            s = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
-                            color = (0, 200, 0, 90) if can_place else (200, 0, 0, 90)
-                            s.fill(color)
-                            if dir_letter:
-                                try:
-                                    font = pygame.font.SysFont(None, max(12, int(tile_size * 0.5)))
-                                    text_s = font.render(dir_letter, True, (255, 255, 255))
-                                    tx = (s.get_width() - text_s.get_width()) // 2
-                                    ty = (s.get_height() - text_s.get_height()) // 2
-                                    s.blit(text_s, (tx, ty))
-                                except Exception:
-                                    pass
-                            screen.blit(s, (px, py))
 
                     # Taladro: asset por dirección o fallback
                     elif p_machine == MACHINE_DRILL or p_machine == "DRILL":

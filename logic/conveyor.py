@@ -1,4 +1,5 @@
 from typing import Optional      # permite indicar que un valor puede ser de un tipo o None
+from enums import Direction
 
 
 # Material que viaja sobre la cinta
@@ -21,6 +22,9 @@ class ConveyorBelt:
         self.speed     : float        = speed      # velocidad de transporte (1.0 = 1 segundo por celda)
         self.item      : Optional[MaterialsMov] = None       # material que lleva ahora mismo, None si esta vacia
         self.is_empty  : bool         = True       # True si no lleva ningun material
+        # Variant almacena una clave opcional para assets tipo "CONVEYOR_FROM-TO"
+        # ejemplo: "CONVEYOR_RIGHT-DOWN". Si es None se usará el asset por dirección.
+        self.variant: Optional[str] = None
 
     def update(self, delta_time: float, system) -> None:
         # si no hay material en esta celda no hay nada que actualizar
@@ -82,10 +86,50 @@ class ConveyorSystem:
     def add_belt(self, belt) -> None:
         # añade una cinta al grid usando su posicion como clave
         self._grid[(belt.x, belt.y)] = belt
+        # Recalcular variantes alrededor del punto insertado
+        self._update_variants_around(belt.x, belt.y)
 
     def remove_belt(self, x: int, y: int) -> None:
         # elimina la cinta de esa posicion, si no existe no hace nada
         self._grid.pop((x, y), None)
+        # Recalcular variantes en vecinos ya que su entrada/salida puede cambiar
+        self._update_variants_around(x, y)
+
+    def _compute_variant_for(self, x: int, y: int) -> Optional[str]:
+        """Determina la clave FROM-TO para la cinta en (x,y) basada en vecinos."""
+        belt = self.get_belt(x, y)
+        if belt is None:
+            return None
+
+        out_dir = getattr(belt, "direction", None)
+        out_val = getattr(out_dir, "value", None)
+
+        incoming = None
+        for d in Direction:
+            nx = x - d.value[0]
+            ny = y - d.value[1]
+            nb = self.get_belt(nx, ny)
+            if nb is None:
+                continue
+            nb_dir = getattr(nb, "direction", None)
+            nb_val = getattr(nb_dir, "value", None)
+            if nb_val == d.value:
+                incoming = d
+                break
+
+        if incoming is not None and out_val is not None and incoming.value != out_val:
+            return f"CONVEYOR_{incoming.name}-{out_dir.name}"
+
+        return None
+
+    def _update_variants_around(self, x: int, y: int) -> None:
+        """Recalcula `variant` para la celda (x,y) y sus 4 vecinos ortogonales."""
+        coords = [(x, y), (x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+        for cx, cy in coords:
+            b = self.get_belt(cx, cy)
+            if b is None:
+                continue
+            b.variant = self._compute_variant_for(cx, cy)
 
     def get_belt(self, x: int, y: int):
         # devuelve la cinta de esa posicion, o None si no hay ninguna
@@ -95,6 +139,8 @@ class ConveyorSystem:
         belt = self.get_belt(x, y)     # busca la cinta en esa posicion
         if belt:                        # si existe
             belt.direction = direction  # cambia su direccion
+            # Recalcular variantes en la zona ya que la dirección cambió
+            self._update_variants_around(x, y)
 
     def place_material(self, x: int, y: int, kind: str) -> bool:
         belt = self.get_belt(x, y)          # busca la cinta en esa posicion
