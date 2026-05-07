@@ -8,6 +8,7 @@ from build_system import (
     screen_to_tile,
 )
 from enums import Direction
+import GUI
 
 
 def process_event(
@@ -47,13 +48,110 @@ def process_event(
             state["selected_machine"] = MACHINE_DRILL
             return screen, None
 
-        # Rotar direccion de colocacion
+        # Rotar direccion de colocacion: R = rotar derecha (horario), Shift+R = rotar izquierda (antihorario)
         if event.key == pygame.K_r:
+            mods = pygame.key.get_mods()
             current_direction = state.get("selected_direction", Direction.RIGHT)
-            state["selected_direction"] = rotate_machine_direction(current_direction)
+            if mods & pygame.KMOD_SHIFT:
+                from build_system import rotate_machine_direction_ccw
+
+                state["selected_direction"] = rotate_machine_direction_ccw(current_direction)
+            else:
+                state["selected_direction"] = rotate_machine_direction(current_direction)
+
             return screen, None
 
     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        # Primera: comprobar si se ha clicado la toolbar de selección rápida
+        try:
+            clicked_machine = GUI.toolbar_hit_test(event.pos)
+        except Exception:
+            clicked_machine = None
+
+        if clicked_machine is not None:
+            state["selected_machine"] = clicked_machine
+            state["context_menu"] = None
+            return screen, None
+
+        # Si hay un menú contextual abierto, priorizar su selección
+        context_menu = state.get("context_menu")
+        if context_menu is not None:
+            idx = GUI.menu_hit_test(context_menu, event.pos)
+            if idx is not None:
+                opt = context_menu["options"][idx]
+                action = opt.get("action")
+
+                if action == "rotate_cw":
+                    # Intentar rotar la máquina existente en la celda (si hay),
+                    # si no, rotar la dirección de selección.
+                    tile = context_menu.get("tile")
+                    if tile is not None and conveyor_system is not None:
+                        tx, ty = tile
+                        belt = conveyor_system.get_belt(tx, ty)
+                        if belt is not None:
+                            new_dir = rotate_machine_direction(belt.direction)
+                            conveyor_system.rotate_belt(tx, ty, new_dir)
+                            # Actualizar persistencia en map_manager si está presente
+                            if map_manager is not None:
+                                map_manager.machine_overrides[(tx, ty)] = {"machine": MACHINE_CONVEYOR, "direction": new_dir.name}
+                        else:
+                            # No hay cinta; rotar la selección global
+                            current_direction = state.get("selected_direction", Direction.RIGHT)
+                            state["selected_direction"] = rotate_machine_direction(current_direction)
+                    else:
+                        current_direction = state.get("selected_direction", Direction.RIGHT)
+                        state["selected_direction"] = rotate_machine_direction(current_direction)
+
+                elif action == "rotate_ccw":
+                    # evitar dependencia circular importando la función localmente
+                    from build_system import rotate_machine_direction_ccw
+
+                    tile = context_menu.get("tile")
+                    if tile is not None and conveyor_system is not None:
+                        tx, ty = tile
+                        belt = conveyor_system.get_belt(tx, ty)
+                        if belt is not None:
+                            new_dir = rotate_machine_direction_ccw(belt.direction)
+                            conveyor_system.rotate_belt(tx, ty, new_dir)
+                            if map_manager is not None:
+                                map_manager.machine_overrides[(tx, ty)] = {"machine": MACHINE_CONVEYOR, "direction": new_dir.name}
+                        else:
+                            current_direction = state.get("selected_direction", Direction.RIGHT)
+                            state["selected_direction"] = rotate_machine_direction_ccw(current_direction)
+                    else:
+                        current_direction = state.get("selected_direction", Direction.RIGHT)
+                        state["selected_direction"] = rotate_machine_direction_ccw(current_direction)
+
+                elif action == "delete":
+                    # Eliminar cualquier máquina en la celda del menú (cinta o taladro)
+                    tile = context_menu.get("tile")
+                    if tile is not None and map_manager is not None:
+                        tx, ty = tile
+                        if conveyor_system is not None:
+                            conveyor_system.remove_belt(tx, ty)
+                        if drill_system is not None:
+                            drill_system.remove_drill(tx, ty)
+                        map_manager.clear_machine(tx, ty)
+
+                elif opt.get("machine") is not None:
+                    # seleccionar máquina y, si viene, la dirección asociada
+                    state["selected_machine"] = opt.get("machine")
+                    if opt.get("direction") is not None:
+                        state["selected_direction"] = opt.get("direction")
+                    # Si la opción incluye una 'in_direction' (curva), guardarla en el estado
+                    if opt.get("in_direction") is not None:
+                        state["selected_in_direction"] = opt.get("in_direction")
+                    else:
+                        state["selected_in_direction"] = None
+
+                # Cerrar menú después de la acción
+                state["context_menu"] = None
+            else:
+                # clic fuera del menú lo cierra
+                state["context_menu"] = None
+
+            return screen, None
+
         # Clic izquierdo para construir cuando hay maquina seleccionada
         selected_machine = state.get("selected_machine")
 
@@ -74,8 +172,47 @@ def process_event(
                 selected_machine,
                 selected_direction,
                 drill_system,
+                selected_in_direction=state.get("selected_in_direction"),
             )
 
+        return screen, None
+
+    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+        # Clic derecho: abrir menú contextual de construcción
+        tile_x, tile_y = screen_to_tile(
+            event.pos,
+            state["offset_x"],
+            state["offset_y"],
+            state["tile_size"],
+        )
+
+        options = [
+            {"label": "Cinta N", "machine": MACHINE_CONVEYOR, "direction": Direction.UP},
+            {"label": "Cinta E", "machine": MACHINE_CONVEYOR, "direction": Direction.RIGHT},
+            {"label": "Cinta S", "machine": MACHINE_CONVEYOR, "direction": Direction.DOWN},
+            {"label": "Cinta O", "machine": MACHINE_CONVEYOR, "direction": Direction.LEFT},
+            # Curvas: especificar in_direction y out direction
+            {"label": "Curva NE", "machine": MACHINE_CONVEYOR, "in_direction": Direction.UP, "direction": Direction.RIGHT},
+            {"label": "Curva ES", "machine": MACHINE_CONVEYOR, "in_direction": Direction.RIGHT, "direction": Direction.DOWN},
+            {"label": "Curva SO", "machine": MACHINE_CONVEYOR, "in_direction": Direction.DOWN, "direction": Direction.LEFT},
+            {"label": "Curva ON", "machine": MACHINE_CONVEYOR, "in_direction": Direction.LEFT, "direction": Direction.UP},
+            {"label": "Curva NO", "machine": MACHINE_CONVEYOR, "in_direction": Direction.UP, "direction": Direction.LEFT},
+            {"label": "Curva OS", "machine": MACHINE_CONVEYOR, "in_direction": Direction.LEFT, "direction": Direction.DOWN},
+            {"label": "Curva SE", "machine": MACHINE_CONVEYOR, "in_direction": Direction.DOWN, "direction": Direction.RIGHT},
+            {"label": "Curva EN", "machine": MACHINE_CONVEYOR, "in_direction": Direction.RIGHT, "direction": Direction.UP},
+            {"label": "Taladro", "machine": MACHINE_DRILL},
+            {"label": "Eliminar", "action": "delete"},
+            {"label": "Rotar derecha (R)", "action": "rotate_cw"},
+            {"label": "Rotar izquierda (Shift+R)", "action": "rotate_ccw"},
+            {"label": "Cancelar", "action": "cancel"},
+        ]
+
+        state["context_menu"] = {"pos": event.pos, "tile": (tile_x, tile_y), "options": options}
+        # Calcular la geometría del menú ahora para que el hit-test funcione
+        try:
+            GUI.compute_menu_geometry(state["context_menu"], state["tile_size"], screen.get_size())
+        except Exception:
+            pass
         return screen, None
 
     if event.type == pygame.MOUSEWHEEL:

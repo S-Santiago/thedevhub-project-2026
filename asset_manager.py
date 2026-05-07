@@ -74,6 +74,7 @@ def load_images(tile_size: int) -> Dict[str, pygame.Surface]:
         else:
             images[name] = _create_fallback_surface(_fallbacks.get(name, (255, 0, 255)), tile_size)
 
+
     return images
 
 
