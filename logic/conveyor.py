@@ -24,6 +24,9 @@ class ConveyorBelt:
         self.speed     : float        = speed      # velocidad de transporte (1.0 = 1 segundo por celda)
         self.item      : Optional[MaterialsMov] = None       # material que lleva ahora mismo, None si esta vacia
         self.is_empty  : bool         = True       # True si no lleva ningun material
+        # Variant almacena una clave opcional para assets tipo "CONVEYOR_FROM-TO"
+        # ejemplo: "CONVEYOR_RIGHT-DOWN". Si es None se usará el asset por dirección.
+        self.variant: Optional[str] = None
 
     def update(self, delta_time: float, system) -> None:
         # si no hay material en esta celda no hay nada que actualizar
