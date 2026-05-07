@@ -15,10 +15,12 @@ class MaterialsMov:
 
 # Una celda de cinta transportadora en el grid
 class ConveyorBelt:
-    def __init__(self, x: int, y: int, direction, speed: float = 1.0) -> None:
+    def __init__(self, x: int, y: int, direction, speed: float = 1.0, incoming_direction: Optional[Direction] = None) -> None:
         self.x         : int          = x          # columna en el grid
         self.y         : int          = y          # fila en el grid
-        self.direction                = direction  # direccion a la que apunta (enum Direction)
+        self.direction                = direction  # direccion a la que apunta (enum Direction) -> salida
+        # incoming_direction: si otra cinta apunta a esta celda, la guardamos para poder dibujar curvas
+        self.in_direction             = incoming_direction
         self.speed     : float        = speed      # velocidad de transporte (1.0 = 1 segundo por celda)
         self.item      : Optional[MaterialsMov] = None       # material que lleva ahora mismo, None si esta vacia
         self.is_empty  : bool         = True       # True si no lleva ningun material
@@ -70,10 +72,43 @@ class ConveyorBelt:
         return (px, py)
 
     def __repr__(self) -> str:
+        in_dir = getattr(self.in_direction, "name", None)
         return (
             f"ConveyorBelt(pos=({self.x},{self.y}), "
-            f"dir={self.direction.name}, "
+            f"dir={self.direction.name}, in={in_dir}, "
             f"item={self.item})"
+        )
+
+    def asset_candidates(self):
+        """Devuelve una lista ordenada de claves de asset a probar para dibujar esta cinta.
+
+        Prioridad: CONVEYOR_{IN}_{OUT} -> CONVEYOR_{OUT} -> CONVEYOR
+        """
+        out_name = getattr(self.direction, "name", str(self.direction))
+        candidates = []
+        if self.in_direction is not None:
+            in_name = getattr(self.in_direction, "name", str(self.in_direction))
+            candidates.append(f"CONVEYOR_{in_name}_{out_name}")
+            candidates.append(f"CONVEYOR_{out_name}_{in_name}")
+        candidates.append(f"CONVEYOR_{out_name}")
+        candidates.append("CONVEYOR")
+        return candidates
+
+
+class ConveyorCurve(ConveyorBelt):
+    """Representa una cinta curva (cambio de sentido) desde `in_direction` hacia `direction`.
+
+    Es una subclase ligera de `ConveyorBelt` que marca la cinta como curva
+    y reutiliza `asset_candidates()` para preferir assets `CONVEYOR_<IN>_<OUT>`.
+    """
+    def __init__(self, x: int, y: int, out_direction, in_direction, speed: float = 1.0):
+        super().__init__(x, y, out_direction, speed, incoming_direction=in_direction)
+        self.is_curve = True
+
+    def __repr__(self) -> str:
+        in_dir = getattr(self.in_direction, "name", None)
+        return (
+            f"ConveyorCurve(pos=({self.x},{self.y}), out={self.direction.name}, in={in_dir}, item={self.item})"
         )
 
 
@@ -86,50 +121,14 @@ class ConveyorSystem:
     def add_belt(self, belt) -> None:
         # añade una cinta al grid usando su posicion como clave
         self._grid[(belt.x, belt.y)] = belt
-        # Recalcular variantes alrededor del punto insertado
-        self._update_variants_around(belt.x, belt.y)
+        # actualizar conexiones entrantes/salientes alrededor de la celda añadida
+        self._refresh_connections(belt.x, belt.y)
 
     def remove_belt(self, x: int, y: int) -> None:
         # elimina la cinta de esa posicion, si no existe no hace nada
         self._grid.pop((x, y), None)
-        # Recalcular variantes en vecinos ya que su entrada/salida puede cambiar
-        self._update_variants_around(x, y)
-
-    def _compute_variant_for(self, x: int, y: int) -> Optional[str]:
-        """Determina la clave FROM-TO para la cinta en (x,y) basada en vecinos."""
-        belt = self.get_belt(x, y)
-        if belt is None:
-            return None
-
-        out_dir = getattr(belt, "direction", None)
-        out_val = getattr(out_dir, "value", None)
-
-        incoming = None
-        for d in Direction:
-            nx = x - d.value[0]
-            ny = y - d.value[1]
-            nb = self.get_belt(nx, ny)
-            if nb is None:
-                continue
-            nb_dir = getattr(nb, "direction", None)
-            nb_val = getattr(nb_dir, "value", None)
-            if nb_val == d.value:
-                incoming = d
-                break
-
-        if incoming is not None and out_val is not None and incoming.value != out_val:
-            return f"CONVEYOR_{incoming.name}-{out_dir.name}"
-
-        return None
-
-    def _update_variants_around(self, x: int, y: int) -> None:
-        """Recalcula `variant` para la celda (x,y) y sus 4 vecinos ortogonales."""
-        coords = [(x, y), (x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
-        for cx, cy in coords:
-            b = self.get_belt(cx, cy)
-            if b is None:
-                continue
-            b.variant = self._compute_variant_for(cx, cy)
+        # actualizar vecinos ya que pueden perder su entrada
+        self._refresh_connections(x, y)
 
     def get_belt(self, x: int, y: int):
         # devuelve la cinta de esa posicion, o None si no hay ninguna
@@ -139,8 +138,8 @@ class ConveyorSystem:
         belt = self.get_belt(x, y)     # busca la cinta en esa posicion
         if belt:                        # si existe
             belt.direction = direction  # cambia su direccion
-            # Recalcular variantes en la zona ya que la dirección cambió
-            self._update_variants_around(x, y)
+            # refrescar conexiones locales
+            self._refresh_connections(x, y)
 
     def place_material(self, x: int, y: int, kind: str) -> bool:
         belt = self.get_belt(x, y)          # busca la cinta en esa posicion
@@ -154,6 +153,23 @@ class ConveyorSystem:
         # list() hace una copia del grid para evitar problemas si se modifica durante el bucle
         for belt in list(self._grid.values()):
             belt.update(delta_time, self)  # actualiza cada cinta
+
+    def _compute_incoming(self, x: int, y: int):
+        """Busca una cinta adyacente que apunte a (x,y) y devuelve su Direction si existe."""
+        for d in Direction:
+            dx, dy = d.value
+            nb = self.get_belt(x - dx, y - dy)
+            if nb is not None and getattr(nb, "direction", None) == d:
+                return d
+        return None
+
+    def _refresh_connections(self, x: int, y: int):
+        """Refresca el campo `in_direction` para la celda (x,y) y sus vecinos inmediatos."""
+        positions = [(x, y), (x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+        for px, py in positions:
+            belt = self.get_belt(px, py)
+            if belt is not None:
+                belt.in_direction = self._compute_incoming(px, py)
 
     def __repr__(self) -> str:
         # lo que se muestra al hacer print(), ej: ConveyorSystem(12 cintas)

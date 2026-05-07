@@ -1,5 +1,5 @@
 from enums import Direction
-from logic.conveyor import ConveyorBelt
+from logic.conveyor import ConveyorBelt, ConveyorCurve
 
 MACHINE_CONVEYOR = "CONVEYOR"
 MACHINE_DRILL = "DRILL"
@@ -14,7 +14,10 @@ _DIRECTION_ORDER = (
 
 
 def rotate_machine_direction(direction):
-    """Return the next clockwise direction for machine placement."""
+    """Devuelve la siguiente dirección en sentido horario para colocar máquinas.
+
+    direction: valor del enum `Direction`.
+    """
     if direction not in _DIRECTION_ORDER:
         return Direction.RIGHT
 
@@ -23,7 +26,10 @@ def rotate_machine_direction(direction):
 
 
 def rotate_machine_direction_ccw(direction):
-    """Return the next counter-clockwise direction for machine placement."""
+    """Devuelve la siguiente dirección en sentido antihorario para colocar máquinas.
+
+    direction: valor del enum `Direction`.
+    """
     if direction not in _DIRECTION_ORDER:
         return Direction.RIGHT
 
@@ -32,19 +38,22 @@ def rotate_machine_direction_ccw(direction):
 
 
 def rotate_conveyor_direction(direction):
-    """Backward-compatible alias."""
+    """Alias compatible: rota la dirección de la cinta en sentido horario."""
     return rotate_machine_direction(direction)
 
 
 def screen_to_tile(mouse_pos, offset_x, offset_y, tile_size):
-    """Translate screen pixels to tile coordinates."""
+    """Convierte coordenadas de pantalla (píxeles) a coordenadas de tile.
+
+    Devuelve una tupla `(tx, ty)` con la celda correspondiente.
+    """
     mouse_x, mouse_y = mouse_pos
     world_x = mouse_x - offset_x
     world_y = mouse_y - offset_y
     return int(world_x // tile_size), int(world_y // tile_size)
 
 
-def _place_conveyor(map_manager, conveyor_system, tile_x, tile_y, selected_direction):
+def _place_conveyor(map_manager, conveyor_system, tile_x, tile_y, selected_direction, selected_in_direction=None):
     if conveyor_system is None:
         return False
 
@@ -54,7 +63,35 @@ def _place_conveyor(map_manager, conveyor_system, tile_x, tile_y, selected_direc
     if not map_manager.place_machine(tile_x, tile_y, MACHINE_CONVEYOR):
         return False
 
-    conveyor_system.add_belt(ConveyorBelt(tile_x, tile_y, selected_direction))
+    # Determinar entrada (incoming): si se especifica `selected_in_direction` usarla,
+    # en caso contrario detectar una cinta vecina que apunte a esta casilla.
+    incoming = selected_in_direction
+    if incoming is None:
+        try:
+            for d in Direction:
+                dx, dy = d.value
+                neighbor = conveyor_system.get_belt(tile_x - dx, tile_y - dy)
+                if neighbor is not None and neighbor.direction == d:
+                    incoming = d
+                    break
+        except Exception:
+            incoming = None
+
+    # Persistir metadatos de dirección en map_manager.machine_overrides para mantener la rotación
+    try:
+        map_manager.machine_overrides[(tile_x, tile_y)] = {"machine": MACHINE_CONVEYOR, "direction": getattr(selected_direction, "name", str(selected_direction)), "in_direction": getattr(incoming, "name", None) if incoming else None}
+    except Exception:
+        pass
+
+    # Si incoming y salida difieren, crear una curva explícita
+    try:
+        if incoming is not None and incoming != selected_direction:
+            conveyor_system.add_belt(ConveyorCurve(tile_x, tile_y, selected_direction, incoming))
+        else:
+            conveyor_system.add_belt(ConveyorBelt(tile_x, tile_y, selected_direction, incoming_direction=incoming))
+    except Exception:
+        # Fallback sencillo
+        conveyor_system.add_belt(ConveyorBelt(tile_x, tile_y, selected_direction, incoming_direction=incoming))
     return True
 
 
@@ -89,8 +126,12 @@ def place_selected_machine(
     selected_machine,
     selected_direction,
     drill_system=None,
+    selected_in_direction=None,
 ):
-    """Place selected machine if the target tile and systems allow it."""
+    """Coloca la máquina seleccionada si la casilla y los sistemas lo permiten.
+
+    Devuelve True si la colocación tuvo éxito, False en caso contrario.
+    """
     if selected_machine == MACHINE_CONVEYOR:
         return _place_conveyor(
             map_manager,
@@ -98,6 +139,7 @@ def place_selected_machine(
             tile_x,
             tile_y,
             selected_direction,
+            selected_in_direction=selected_in_direction,
         )
 
     if selected_machine == MACHINE_DRILL:

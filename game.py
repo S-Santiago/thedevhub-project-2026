@@ -95,6 +95,7 @@ def run():
         "camera_speed": CAMERA_SPEED,
         "selected_machine": MACHINE_CONVEYOR,
         "selected_direction": Direction.RIGHT,
+        "selected_in_direction": None,
     }
     
     dt = 0.0
@@ -172,7 +173,13 @@ def run():
         sel_direction = state.get("selected_direction")
         if sel_machine is not None and tx is not None and ty is not None:
             can_place = map_manager.can_place_machine(tx, ty)
-            preview = {"tile": (tx, ty), "machine": sel_machine, "direction": sel_direction, "can_place": can_place}
+            preview = {
+                "tile": (tx, ty),
+                "machine": sel_machine,
+                "direction": sel_direction,
+                "in_direction": state.get("selected_in_direction"),
+                "can_place": can_place,
+            }
 
         debug_info = {
             "fps": round(clock.get_fps(), 1),
