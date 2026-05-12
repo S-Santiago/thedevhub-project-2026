@@ -144,7 +144,7 @@ def render_frame(
 
                         surf = None
                         if incoming is not None and p_dir is not None:
-                            combo_key = f"CONVEYOR_{incoming.name}-{p_dir.name}"
+                            combo_key = f"CONVEYOR_{incoming.name}_{p_dir.name}"
                             if combo_key in images and images[combo_key] is not None:
                                 surf = images[combo_key].copy()
 

@@ -101,6 +101,7 @@ def run():
     dt = 0.0
 
     while state["running"]:
+        dt = clock.tick(USER_OPTIONS["fps"]) / 1000.0
         for event in pygame.event.get():
             screen, new_images = process_event(
                 event,
@@ -173,11 +174,25 @@ def run():
         sel_direction = state.get("selected_direction")
         if sel_machine is not None and tx is not None and ty is not None:
             can_place = map_manager.can_place_machine(tx, ty)
+            
+            # Detectar dirección entrante automáticamente (igual que en _place_conveyor)
+            in_direction = state.get("selected_in_direction")
+            if in_direction is None and sel_machine == "CONVEYOR" and conveyor_system is not None:
+                try:
+                    for d in Direction:
+                        dx, dy = d.value
+                        neighbor = conveyor_system.get_belt(tx - dx, ty - dy)
+                        if neighbor is not None and neighbor.direction == d:
+                            in_direction = d
+                            break
+                except Exception:
+                    in_direction = None
+            
             preview = {
                 "tile": (tx, ty),
                 "machine": sel_machine,
                 "direction": sel_direction,
-                "in_direction": state.get("selected_in_direction"),
+                "in_direction": in_direction,
                 "can_place": can_place,
             }
 
@@ -207,7 +222,6 @@ def run():
             drill_system,
             state.get("context_menu"),
         )
-
-        dt = clock.tick(USER_OPTIONS["fps"]) / 1000.0
+        
 
     pygame.quit()
