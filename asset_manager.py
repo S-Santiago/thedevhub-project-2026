@@ -1,3 +1,6 @@
+import os
+import sys
+
 import pygame
 from pathlib import Path
 from typing import Dict, Tuple
@@ -7,6 +10,43 @@ from settings import ASSETS_PATH, TERRAINS, MATERIALS, MACHINES
 _base_images: Dict[str, pygame.Surface] = {}
 _fallbacks: Dict[str, Tuple[int, int, int]] = {}
 _scaled_cache: Dict[Tuple[str, int], pygame.Surface] = {}
+
+
+def resource_path(relative_path):
+    """Obtiene la ruta absoluta al recurso, funciona en entorno de desarrollo y en PyInstaller"""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
+
+def _fallback_color(category_name: str) -> Tuple[int, int, int]:
+    return (255, 0, 255) if category_name == "TERRAINS" else (100, 100, 100)
+
+
+def _load_image(file_path: Path):
+    try:
+        return pygame.image.load(str(file_path)).convert_alpha()
+    except pygame.error as e:
+        print(f"[ERROR] Asset '{file_path}': {e}. Using fallback texture.")
+        return None
+
+
+def _register_asset(key: str, surface, fallback_color: Tuple[int, int, int]) -> None:
+    _base_images[key] = surface
+    _fallbacks[key] = fallback_color
+
+
+def _load_directory_assets(base_name: str, assets_dir: Path, category_name: str) -> None:
+    fallback_color = _fallback_color(category_name)
+    for child in sorted(assets_dir.iterdir()):
+        if not child.is_file() or child.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+            continue
+        key = f"{base_name}_{child.stem.upper()}"
+        _register_asset(key, _load_image(child), fallback_color)
+
+    # Asegurar la clave base aunque el contenido esté en subarchivos.
+    _base_images.setdefault(base_name, None)
+    _fallbacks.setdefault(base_name, fallback_color)
 
 
 def _init_base_images():
@@ -19,42 +59,25 @@ def _init_base_images():
         ("MACHINES", MACHINES),
     ]
 
-    assets_root = Path(ASSETS_PATH)
+    assets_root = Path(resource_path(ASSETS_PATH))
 
     for category_name, mapping in sources:
         assets_dir = assets_root / category_name
         for name in mapping.keys():
             file_path = assets_dir / f"{name.lower()}.png"
             dir_path = assets_dir / name
+            fallback_color = _fallback_color(category_name)
 
             # Si existe una carpeta para este asset (ej. MACHINES/CONVEYOR/RIGHT.png), cargar sus hijos
             if dir_path.exists() and dir_path.is_dir():
-                for child in sorted(dir_path.iterdir()):
-                    if child.is_file() and child.suffix.lower() in ('.png', '.jpg', '.jpeg'):
-                        key = f"{name}_{child.stem.upper()}"
-                        try:
-                            _base_images[key] = pygame.image.load(str(child)).convert_alpha()
-                        except pygame.error as e:
-                            print(f"[ERROR] Asset '{child}': {e}. Using fallback texture.")
-                            _base_images[key] = None
-                        _fallbacks[key] = (255, 0, 255) if category_name == "TERRAINS" else (100, 100, 100)
-
-                # Asegurar que la clave base existe (puede usarse como fallback genérico)
-                _base_images.setdefault(name, None)
-                _fallbacks.setdefault(name, (255, 0, 255) if category_name == "TERRAINS" else (100, 100, 100))
+                _load_directory_assets(name, dir_path, category_name)
 
             # Si existe un fichero único (ej. machines/conveyor.png), cargarlo
             elif file_path.exists():
-                try:
-                    _base_images[name] = pygame.image.load(str(file_path)).convert_alpha()
-                except pygame.error as e:
-                    print(f"[ERROR] Asset '{file_path}': {e}. Using fallback texture.")
-                    _base_images[name] = None
-                _fallbacks[name] = (255, 0, 255) if category_name == "TERRAINS" else (100, 100, 100)
+                _register_asset(name, _load_image(file_path), fallback_color)
 
             else:
-                _base_images[name] = None
-                _fallbacks[name] = (255, 0, 255) if category_name == "TERRAINS" else (100, 100, 100)
+                _register_asset(name, None, fallback_color)
 
 
 def load_images(tile_size: int) -> Dict[str, pygame.Surface]:

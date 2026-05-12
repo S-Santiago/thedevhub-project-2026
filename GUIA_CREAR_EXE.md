@@ -33,13 +33,15 @@ Para que el juego funcione correctamente, comparte **toda** la carpeta `TheDevHu
 Si prefieres un solo archivo:
 
 ```bash
-py -m PyInstaller --noconfirm --clean --onefile --windowed --name "TheDevHub" --add-data "assets;assets" app.pyw
+py -m PyInstaller --noconfirm --clean --onefile --windowed --name "TheDevHub" --icon="assets/icon.ico" --add-data "assets;assets" --collect-binaries numpy --hidden-import numpy --hidden-import numpy._core._multiarray_umath app.pyw
 ```
 
 Resultado esperado:
 - `dist/TheDevHub.exe`
 
 Nota: en modo `--onefile` el inicio puede tardar un poco más.
+
+Nota: para que el icono de Windows del ejecutable se incruste correctamente, usa un archivo `.ico` (por ejemplo `assets/icon.ico`).
 
 ## 6) Errores comunes
 ### No encuentra `pygame`

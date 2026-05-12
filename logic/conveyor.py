@@ -2,6 +2,25 @@ from typing import Optional      # permite indicar que un valor puede ser de un 
 from enums import Direction
 
 
+def _direction_name(direction) -> str:
+    if direction is None:
+        return ""
+    return getattr(direction, "name", str(direction)).upper()
+
+
+def _opposite_direction(direction):
+    if direction is None:
+        return None
+
+    opposite_map = {
+        Direction.UP: Direction.DOWN,
+        Direction.DOWN: Direction.UP,
+        Direction.LEFT: Direction.RIGHT,
+        Direction.RIGHT: Direction.LEFT,
+    }
+    return opposite_map.get(direction, None)
+
+
 # Material que viaja sobre la cinta
 class MaterialsMov:
     def __init__(self, kind: str) -> None:
@@ -20,13 +39,43 @@ class ConveyorBelt:
         self.y         : int          = y          # fila en el grid
         self.direction                = direction  # direccion a la que apunta (enum Direction) -> salida
         # incoming_direction: si otra cinta apunta a esta celda, la guardamos para poder dibujar curvas
-        self.in_direction             = incoming_direction
+        self.incoming_direction       = incoming_direction
+        self.in_direction             = incoming_direction  # alias mantenido por compatibilidad interna
         self.speed     : float        = speed      # velocidad de transporte (1.0 = 1 segundo por celda)
         self.item      : Optional[MaterialsMov] = None       # material que lleva ahora mismo, None si esta vacia
         self.is_empty  : bool         = True       # True si no lleva ningun material
         # Variant almacena una clave opcional para assets tipo "CONVEYOR_FROM-TO"
         # ejemplo: "CONVEYOR_RIGHT-DOWN". Si es None se usará el asset por dirección.
         self.variant: Optional[str] = None
+
+    def set_incoming_direction(self, incoming_direction: Optional[Direction]) -> None:
+        self.incoming_direction = incoming_direction
+        self.in_direction = incoming_direction
+
+    def entrance_direction(self):
+        """Devuelve el lado visual de entrada de la cinta."""
+        return _opposite_direction(self.incoming_direction)
+
+    def is_corner(self) -> bool:
+        entrance = self.entrance_direction()
+        return entrance is not None and entrance != self.direction
+
+    def is_straight(self) -> bool:
+        entrance = self.entrance_direction()
+        return entrance is None or entrance == self.direction
+
+    def asset_key(self) -> str:
+        """Devuelve la clave exacta del asset que representa esta cinta."""
+        out_name = _direction_name(self.direction)
+        if not out_name:
+            return "CONVEYOR"
+
+        if self.is_corner():
+            entrance = self.entrance_direction()
+            if entrance is not None:
+                return f"CONVEYOR_{_direction_name(entrance)}-{out_name}"
+
+        return f"CONVEYOR_{out_name}"
 
     def update(self, delta_time: float, system) -> None:
         # si no hay material en esta celda no hay nada que actualizar
@@ -72,7 +121,7 @@ class ConveyorBelt:
         return (px, py)
 
     def __repr__(self) -> str:
-        in_dir = getattr(self.in_direction, "name", None)
+        in_dir = getattr(self.incoming_direction, "name", None)
         return (
             f"ConveyorBelt(pos=({self.x},{self.y}), "
             f"dir={self.direction.name}, in={in_dir}, "
@@ -82,15 +131,11 @@ class ConveyorBelt:
     def asset_candidates(self):
         """Devuelve una lista ordenada de claves de asset a probar para dibujar esta cinta.
 
-        Prioridad: CONVEYOR_{IN}_{OUT} -> CONVEYOR_{OUT} -> CONVEYOR
+        Prioridad: asset exacto de curva -> asset recto -> fallback genérico.
         """
-        out_name = getattr(self.direction, "name", str(self.direction))
-        candidates = []
-        if self.in_direction is not None:
-            in_name = getattr(self.in_direction, "name", str(self.in_direction))
-            candidates.append(f"CONVEYOR_{in_name}_{out_name}")
-            candidates.append(f"CONVEYOR_{out_name}_{in_name}")
-        candidates.append(f"CONVEYOR_{out_name}")
+        candidates = [self.asset_key()]
+        if self.is_corner():
+            candidates.append(f"CONVEYOR_{_direction_name(self.direction)}")
         candidates.append("CONVEYOR")
         return candidates
 
@@ -99,14 +144,14 @@ class ConveyorCurve(ConveyorBelt):
     """Representa una cinta curva (cambio de sentido) desde `in_direction` hacia `direction`.
 
     Es una subclase ligera de `ConveyorBelt` que marca la cinta como curva
-    y reutiliza `asset_candidates()` para preferir assets `CONVEYOR_<IN>_<OUT>`.
+    y reutiliza `asset_key()` para preferir assets `CONVEYOR_<ENTRADA>-<SALIDA>`.
     """
     def __init__(self, x: int, y: int, out_direction, in_direction, speed: float = 1.0):
         super().__init__(x, y, out_direction, speed, incoming_direction=in_direction)
         self.is_curve = True
 
     def __repr__(self) -> str:
-        in_dir = getattr(self.in_direction, "name", None)
+        in_dir = getattr(self.incoming_direction, "name", None)
         return (
             f"ConveyorCurve(pos=({self.x},{self.y}), out={self.direction.name}, in={in_dir}, item={self.item})"
         )
@@ -257,7 +302,7 @@ class ConveyorSystem:
         for px, py in positions:
             belt = self.get_belt(px, py)
             if belt is not None:
-                belt.in_direction = self._compute_incoming(px, py)
+                belt.set_incoming_direction(self._compute_incoming(px, py))
 
     def iter_belts(self):
         """Iterador público sobre las cintas: devuelve ((x,y), belt)."""

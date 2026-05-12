@@ -1,5 +1,8 @@
+import ctypes
+import os
 import pygame
 import platform
+import traceback
 
 from settings import (
     APP_ID,
@@ -8,12 +11,11 @@ from settings import (
     MIN_TILE_SIZE,
     CAMERA_SPEED,
     USER_OPTIONS,
-    ASSETS_PATH,
 )
 
 from build_system import MACHINE_CONVEYOR
 from map_manager import MapManager
-from asset_manager import load_images
+from asset_manager import load_images, resource_path
 from renderer import render_frame
 from input_handler import process_event
 from logic.conveyor import ConveyorSystem
@@ -23,19 +25,21 @@ from enums import Direction
 
 def run():
     if platform.system() == "Windows":
-        import ctypes
-
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
 
     pygame.init()
     pygame.display.set_caption(APP_NAME)
 
     # Intentar cargar el icono si existe (no crítico)
+    icon_path = "<no-resuelto>"
     try:
-        game_icon = pygame.image.load(f"{ASSETS_PATH}/icon.png")
-        pygame.display.set_icon(game_icon)
-    except Exception:
-        pass
+        # Forzamos la normalización de la ruta absoluta para Windows
+        icon_path = os.path.abspath(resource_path("assets/icon.png"))
+        pygame.display.set_icon(pygame.image.load(icon_path))
+    except Exception as e:
+        # Si estamos en modo ventana, esto nos salvará la vida para depurar
+        error_msg = f"Ruta intentada:\n{icon_path}\n\nError:\n{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        ctypes.windll.user32.MessageBoxW(0, error_msg, "Depuración de Icono", 0)
 
     # Configuración de pantalla
     screens = pygame.display.get_desktop_sizes()

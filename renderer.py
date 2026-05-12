@@ -15,6 +15,46 @@ def _get_debug_font() -> pygame.font.Font:
     return _debug_font
 
 
+def _direction_letter(direction):
+    name = getattr(direction, "name", None) if direction is not None else None
+    if name is None:
+        return None
+    return {"UP": "N", "RIGHT": "E", "DOWN": "S", "LEFT": "W"}.get(name, None)
+
+
+def _conveyor_asset_candidates(incoming_direction, outgoing_direction):
+    out_name = getattr(outgoing_direction, "name", None) if outgoing_direction is not None else None
+    candidates = []
+
+    if out_name is None:
+        return ["CONVEYOR"]
+
+    if incoming_direction is not None:
+        entry_direction = None
+        if incoming_direction == Direction.UP:
+            entry_direction = Direction.DOWN
+        elif incoming_direction == Direction.DOWN:
+            entry_direction = Direction.UP
+        elif incoming_direction == Direction.LEFT:
+            entry_direction = Direction.RIGHT
+        elif incoming_direction == Direction.RIGHT:
+            entry_direction = Direction.LEFT
+
+        if entry_direction is not None and entry_direction != outgoing_direction:
+            candidates.append(f"CONVEYOR_{entry_direction.name}-{out_name}")
+
+    candidates.append(f"CONVEYOR_{out_name}")
+    candidates.append("CONVEYOR")
+    return candidates
+
+
+def _select_conveyor_surface(images, incoming_direction, outgoing_direction):
+    for key in _conveyor_asset_candidates(incoming_direction, outgoing_direction):
+        if key in images and images[key] is not None:
+            return images[key].copy()
+    return None
+
+
 def render_frame(
     screen,
     tiles,
@@ -46,24 +86,17 @@ def render_frame(
         for (cx, cy), belt in conveyor_system.iter_belts():
             pos_x = offset_x + (cx * tile_size)
             pos_y = offset_y + (cy * tile_size)
-            # Dibujar la cinta: comprobar candidatos de asset según la configuración de la cinta.
-            # Prioridad sugerida: CONVEYOR_{IN}_{OUT} -> CONVEYOR_{OUT} -> CONVEYOR
-            candidates = []
+            surf = None
             try:
-                if hasattr(belt, "asset_candidates"):
-                    candidates = belt.asset_candidates()
-                else:
-                    candidates = [f"CONVEYOR_{belt.direction.name}", "CONVEYOR"]
+                incoming_direction = getattr(belt, "incoming_direction", getattr(belt, "in_direction", None))
+                outgoing_direction = getattr(belt, "direction", None)
+                surf = _select_conveyor_surface(images, incoming_direction, outgoing_direction)
             except Exception:
-                candidates = [f"CONVEYOR_{belt.direction.name}", "CONVEYOR"]
+                surf = None
 
-            drawn = False
-            for key in candidates:
-                if key in images and images[key] is not None:
-                    screen.blit(images[key], (pos_x, pos_y))
-                    drawn = True
-                    break
-            if not drawn:
+            if surf is not None:
+                screen.blit(surf, (pos_x, pos_y))
+            else:
                 pygame.draw.rect(screen, (100, 100, 100), (pos_x, pos_y, tile_size, tile_size), 2)
             
             # Dibujar el material moviéndose encima de la cinta
@@ -117,71 +150,50 @@ def render_frame(
                     px = offset_x + (p_tile[0] * tile_size)
                     py = offset_y + (p_tile[1] * tile_size)
 
-                    # Cinta: intentar usar asset específico por dirección
-                    # Determinar letra cardinal para la dirección (N,E,S,W)
-                    dir_letter = None
-                    if p_dir is not None:
-                        dir_name = getattr(p_dir, "name", None) if p_dir is not None else None
-                        if dir_name is None:
-                            dir_name = str(p_dir)
-                        letter_map = {"UP": "N", "RIGHT": "E", "DOWN": "S", "LEFT": "W"}
-                        dir_letter = letter_map.get(dir_name, None)
+                    dir_letter = _direction_letter(p_dir)
 
                     if p_machine == MACHINE_CONVEYOR or p_machine == "CONVEYOR":
-                        # Intentar usar asset FROM-TO para la previsualización si es aplicable
-                        incoming = None
-                        try:
-                            if conveyor_system is not None:
-                                for d in Direction:
-                                    nx = p_tile[0] - d.value[0]
-                                    ny = p_tile[1] - d.value[1]
-                                    nb = conveyor_system.get_belt(nx, ny)
-                                    if nb is not None and getattr(nb, "direction", None) == d:
-                                        incoming = d
-                                        break
-                        except Exception:
-                            incoming = None
-
                         surf = None
-                        if incoming is not None and p_dir is not None:
-                            combo_key = f"CONVEYOR_{incoming.name}_{p_dir.name}"
-                            if combo_key in images and images[combo_key] is not None:
-                                surf = images[combo_key].copy()
-
-                        if surf is None:
-                            dir_name = getattr(p_dir, "name", None) if p_dir is not None else None
-                            dir_key = f"CONVEYOR_{dir_name}" if dir_name else "CONVEYOR"
-                            if dir_key in images and images[dir_key] is not None:
-                                surf = images[dir_key].copy()
-                            elif "CONVEYOR" in images and images["CONVEYOR"] is not None:
-                                surf = images["CONVEYOR"].copy()
-                            else:
-                                s = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
-                                color = (0, 200, 0, 90) if can_place else (200, 0, 0, 90)
-                                s.fill(color)
-                                if dir_letter:
-                                    try:
-                                        font = pygame.font.SysFont(None, max(12, int(tile_size * 0.5)))
-                                        text_s = font.render(dir_letter, True, (255, 255, 255))
-                                        tx = (s.get_width() - text_s.get_width()) // 2
-                                        ty = (s.get_height() - text_s.get_height()) // 2
-                                        s.blit(text_s, (tx, ty))
-                                    except Exception:
-                                        pass
-                                screen.blit(s, (px, py))
+                        try:
+                            surf = _select_conveyor_surface(images, preview.get("in_direction"), p_dir)
+                        except Exception:
+                            surf = None
 
                         if surf is not None:
                             surf.set_alpha(160 if can_place else 100)
+                            try:
+                                font = pygame.font.SysFont(None, max(10, int(tile_size * 0.35)))
+                                incoming_letter = _direction_letter(preview.get("in_direction"))
+                                outgoing_letter = _direction_letter(p_dir)
+                                if incoming_letter is not None and outgoing_letter is not None:
+                                    text_s = font.render(f"{incoming_letter}\u2192{outgoing_letter}", True, (255, 255, 255))
+                                elif outgoing_letter is not None:
+                                    text_s = font.render(outgoing_letter, True, (255, 255, 255))
+                                else:
+                                    text_s = None
+
+                                if text_s is not None:
+                                    tx = (surf.get_width() - text_s.get_width()) // 2
+                                    ty = (surf.get_height() - text_s.get_height()) // 2
+                                    surf.blit(text_s, (tx, ty))
+                            except Exception:
+                                pass
+
+                            screen.blit(surf, (px, py))
+                        else:
+                            s = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
+                            color = (0, 200, 0, 90) if can_place else (200, 0, 0, 90)
+                            s.fill(color)
                             if dir_letter:
                                 try:
                                     font = pygame.font.SysFont(None, max(12, int(tile_size * 0.5)))
                                     text_s = font.render(dir_letter, True, (255, 255, 255))
-                                    tx = (surf.get_width() - text_s.get_width()) // 2
-                                    ty = (surf.get_height() - text_s.get_height()) // 2
-                                    surf.blit(text_s, (tx, ty))
+                                    tx = (s.get_width() - text_s.get_width()) // 2
+                                    ty = (s.get_height() - text_s.get_height()) // 2
+                                    s.blit(text_s, (tx, ty))
                                 except Exception:
                                     pass
-                            screen.blit(surf, (px, py))
+                            screen.blit(s, (px, py))
 
                     # Taladro: asset por dirección o fallback
                     elif p_machine == MACHINE_DRILL or p_machine == "DRILL":
@@ -304,27 +316,14 @@ def render_frame(
                         letter_map = {"UP": "N", "RIGHT": "E", "DOWN": "S", "LEFT": "W"}
                         dir_letter = letter_map.get(dir_name, None)
 
-                    # Cinta: intentar usar asset específico por dirección o curva
+                    # Cinta: usar la misma selección de asset que el render normal
                     if p_machine == MACHINE_CONVEYOR or p_machine == "CONVEYOR":
-                        out_name = getattr(p_dir, "name", None) if p_dir is not None else None
                         p_in = preview.get("in_direction")
-
-                        # Construir lista de candidatos preferida por curvas
-                        candidates = []
-                        if p_in is not None:
-                            in_name = getattr(p_in, "name", None)
-                            if in_name and out_name:
-                                candidates.append(f"CONVEYOR_{in_name}_{out_name}")
-                                candidates.append(f"CONVEYOR_{out_name}_{in_name}")
-                        if out_name:
-                            candidates.append(f"CONVEYOR_{out_name}")
-                        candidates.append("CONVEYOR")
-
                         chosen = None
-                        for key in candidates:
-                            if key in images and images[key] is not None:
-                                chosen = images[key].copy()
-                                break
+                        try:
+                            chosen = _select_conveyor_surface(images, p_in, p_dir)
+                        except Exception:
+                            chosen = None
 
                         if chosen is not None:
                             surf = chosen
@@ -334,17 +333,13 @@ def render_frame(
                             # si no, mostrar la letra de salida.
                             try:
                                 font = pygame.font.SysFont(None, max(10, int(tile_size * 0.35)))
-                                if p_in is not None and out_name is not None:
-                                    in_name = getattr(p_in, "name", None)
-                                    in_letter = {"UP": "N", "RIGHT": "E", "DOWN": "S", "LEFT": "W"}.get(in_name, "?")
-                                    out_letter = {"UP": "N", "RIGHT": "E", "DOWN": "S", "LEFT": "W"}.get(out_name, "?")
+                                in_letter = _direction_letter(p_in)
+                                out_letter = _direction_letter(p_dir)
+                                if in_letter is not None and out_letter is not None:
                                     text_s = font.render(f"{in_letter}\u2192{out_letter}", True, (255, 255, 255))
                                 else:
-                                    dir_letter = None
-                                    if out_name is not None:
-                                        dir_letter = {"UP": "N", "RIGHT": "E", "DOWN": "S", "LEFT": "W"}.get(out_name, None)
-                                    if dir_letter:
-                                        text_s = font.render(dir_letter, True, (255, 255, 255))
+                                    if out_letter:
+                                        text_s = font.render(out_letter, True, (255, 255, 255))
                                     else:
                                         text_s = None
 
