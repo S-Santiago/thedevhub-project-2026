@@ -43,7 +43,7 @@ def render_frame(
             
     # Dibujar las cintas transportadoras y los materiales en ellas
     if conveyor_system is not None:
-        for (cx, cy), belt in conveyor_system._grid.items():
+        for (cx, cy), belt in conveyor_system.iter_belts():
             pos_x = offset_x + (cx * tile_size)
             pos_y = offset_y + (cy * tile_size)
             # Dibujar la cinta: comprobar candidatos de asset según la configuración de la cinta.
@@ -82,7 +82,7 @@ def render_frame(
 
     # Dibujar perforadoras
     if drill_system is not None:
-        for (dx, dy), drill in drill_system._grid.items():
+        for (dx, dy), drill in drill_system.iter_drills():
             pos_x = offset_x + (dx * tile_size)
             pos_y = offset_y + (dy * tile_size)
 
@@ -144,7 +144,7 @@ def render_frame(
 
                         surf = None
                         if incoming is not None and p_dir is not None:
-                            combo_key = f"CONVEYOR_{incoming.name}-{p_dir.name}"
+                            combo_key = f"CONVEYOR_{incoming.name}_{p_dir.name}"
                             if combo_key in images and images[combo_key] is not None:
                                 surf = images[combo_key].copy()
 

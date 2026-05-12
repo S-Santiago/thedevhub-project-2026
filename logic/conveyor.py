@@ -150,9 +150,97 @@ class ConveyorSystem:
         return False  # la celda no existe o ya tiene un material
 
     def update(self, delta_time: float) -> None:
-        # list() hace una copia del grid para evitar problemas si se modifica durante el bucle
+        """Actualizar sistema de cintas en dos fases:
+
+        1) Calcular el progreso proyectado de cada material y registrar intenciones
+           de transferencia cuando el progreso supera 1.0.
+        2) Resolver conflictos de destino y aplicar las transferencias de forma
+           atómica para evitar condiciones de carrera y pérdidas de ítems.
+        """
+        # Paso 1: calcular next_progress y determinar qué cintas intentan mover
+        next_progress = {}
+        will_move_out = set()
         for belt in list(self._grid.values()):
-            belt.update(delta_time, self)  # actualiza cada cinta
+            if belt.item is None:
+                continue
+            projected = belt.item.progress + belt.speed * delta_time
+            next_progress[(belt.x, belt.y)] = projected
+            if projected >= 1.0:
+                will_move_out.add((belt.x, belt.y))
+
+        # Paso 2: construir intenciones (dst_pos -> (src_pos, item)) respetando
+        # que el destino sea válido (exista) y vaya a quedar libre o ya esté libre.
+        intents = {}
+        for belt in list(self._grid.values()):
+            src = (belt.x, belt.y)
+            if belt.item is None:
+                # nada que hacer, pero actualizar progreso si no se mueve
+                continue
+
+            projected = next_progress.get(src, belt.item.progress + belt.speed * delta_time)
+            if projected < 1.0:
+                # avanzamos el progreso y no intentamos transferir
+                belt.item.progress = projected
+                continue
+
+            dx, dy = belt.direction.value
+            dst = (belt.x + dx, belt.y + dy)
+            dest_belt = self.get_belt(dst[0], dst[1])
+
+            # Destino inexistente: el material queda en el borde
+            if dest_belt is None:
+                belt.item.progress = 1.0
+                continue
+
+            # Considerar destino libre si ahora está vacío o si va a moverse fuera
+            dest_has_item = dest_belt.item is not None
+            dest_will_move = dst in will_move_out
+
+            # Evitar caso de swap directo: si el destino planea moverse a src, cancelar
+            swap = False
+            if dest_will_move:
+                ddx, ddy = dest_belt.direction.value
+                dest_target = (dest_belt.x + ddx, dest_belt.y + ddy)
+                if dest_target == src:
+                    swap = True
+
+            if dest_has_item and not dest_will_move:
+                # destino ocupado y no acaba de vaciarse: esperar
+                belt.item.progress = 1.0
+                continue
+
+            if swap:
+                # cancelar ambos: dejar en frontera
+                belt.item.progress = 1.0
+                dest_belt.item.progress = 1.0
+                # no registrar intención
+                continue
+
+            # registrar intención si no hay conflicto previo
+            if dst in intents:
+                # conflicto: dos fuentes quieren el mismo destino -> cancelar
+                prev_src, prev_item = intents.pop(dst)
+                # dejar ambos en frontera
+                s = self.get_belt(prev_src[0], prev_src[1])
+                if s and s.item:
+                    s.item.progress = 1.0
+                belt.item.progress = 1.0
+                continue
+
+            intents[dst] = (src, belt.item)
+
+        # Paso 3: aplicar transferencias válidas
+        for dst_pos, (src_pos, item) in intents.items():
+            src_belt = self.get_belt(src_pos[0], src_pos[1])
+            dst_belt = self.get_belt(dst_pos[0], dst_pos[1])
+            if src_belt is None or dst_belt is None:
+                continue
+            # mover item y actualizar banderas de ocupación
+            src_belt.item = None
+            src_belt.is_empty = True
+            dst_belt.item = item
+            dst_belt.is_empty = False
+            dst_belt.item.progress = 0.0
 
     def _compute_incoming(self, x: int, y: int):
         """Busca una cinta adyacente que apunte a (x,y) y devuelve su Direction si existe."""
@@ -170,6 +258,13 @@ class ConveyorSystem:
             belt = self.get_belt(px, py)
             if belt is not None:
                 belt.in_direction = self._compute_incoming(px, py)
+
+    def iter_belts(self):
+        """Iterador público sobre las cintas: devuelve ((x,y), belt)."""
+        return iter(self._grid.items())
+
+    def __len__(self):
+        return len(self._grid)
 
     def __repr__(self) -> str:
         # lo que se muestra al hacer print(), ej: ConveyorSystem(12 cintas)

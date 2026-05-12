@@ -72,6 +72,34 @@ class MapManager:
             merged.update(tiles)
         return merged
 
+    def get_tiles_in_rect(self, tile_x0, tile_y0, tile_x1, tile_y1):
+        """Devuelve un diccionario con los tiles cuyas coordenadas absolutas
+        estén dentro del rectángulo inclusivo [tile_x0,tile_y0] - [tile_x1,tile_y1].
+
+        Este método asegura los chunks necesarios y limita la iteración sólo a
+        las celdas visibles para mejorar el rendimiento del renderizado.
+        """
+        result = {}
+        # Normalizar rangos
+        if tile_x1 < tile_x0:
+            tile_x0, tile_x1 = tile_x1, tile_x0
+        if tile_y1 < tile_y0:
+            tile_y0, tile_y1 = tile_y1, tile_y0
+
+        cx0 = tile_x0 // self.chunk_size
+        cy0 = tile_y0 // self.chunk_size
+        cx1 = tile_x1 // self.chunk_size
+        cy1 = tile_y1 // self.chunk_size
+
+        for cx in range(cx0, cx1 + 1):
+            for cy in range(cy0, cy1 + 1):
+                self._ensure_chunk(cx, cy)
+                chunk = self.chunks.get((cx, cy), {})
+                for (x, y), tile in chunk.items():
+                    if tile_x0 <= x <= tile_x1 and tile_y0 <= y <= tile_y1:
+                        result[(x, y)] = tile
+        return result
+
     def get_tile(self, x, y, ensure_chunk=False):
         """Devuelve un tile por coordenada absoluta o None si no existe."""
         chunk_x = x // self.chunk_size
