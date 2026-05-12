@@ -159,8 +159,18 @@ def run():
         ty = None
         tile_under = None
 
-        # Obtener tiles cacheadas (la generación se dispara al mover cámara, zoom y resize)
-        tiles = map_manager.get_merged_tiles()
+        # Obtener sólo tiles visibles para el viewport actual (mejora rendimiento)
+        left = -state["offset_x"]
+        top = -state["offset_y"]
+        right = left + state["window_width"]
+        bottom = top + state["window_height"]
+
+        tile_left = int(left // state["tile_size"])
+        tile_top = int(top // state["tile_size"])
+        tile_right = int(right // state["tile_size"])
+        tile_bottom = int(bottom // state["tile_size"])
+
+        tiles = map_manager.get_tiles_in_rect(tile_left, tile_top, tile_right, tile_bottom)
 
         if wx is not None and wy is not None:
             tx = int(wx // state["tile_size"])
@@ -205,8 +215,8 @@ def run():
             "seed": map_manager.base_seed,
             "selected_machine": state.get("selected_machine"),
             "selected_direction": state.get("selected_direction"),
-            "belts": len(conveyor_system._grid),
-            "drills": len(drill_system._grid),
+            "belts": len(conveyor_system),
+            "drills": len(drill_system),
             "preview": preview,
         }
 

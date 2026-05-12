@@ -259,6 +259,13 @@ class ConveyorSystem:
             if belt is not None:
                 belt.in_direction = self._compute_incoming(px, py)
 
+    def iter_belts(self):
+        """Iterador público sobre las cintas: devuelve ((x,y), belt)."""
+        return iter(self._grid.items())
+
+    def __len__(self):
+        return len(self._grid)
+
     def __repr__(self) -> str:
         # lo que se muestra al hacer print(), ej: ConveyorSystem(12 cintas)
         return f"ConveyorSystem({len(self._grid)} cintas)"

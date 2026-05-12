@@ -77,3 +77,10 @@ class DrillSystem:
 
     def __repr__(self) -> str:
         return f"DrillSystem({len(self._grid)} drills)"
+
+    def iter_drills(self):
+        """Iterador público sobre los taladros: devuelve ((x,y), drill)."""
+        return iter(self._grid.items())
+
+    def __len__(self):
+        return len(self._grid)

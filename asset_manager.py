@@ -6,6 +6,7 @@ from settings import ASSETS_PATH, TERRAINS, MATERIALS, MACHINES
 
 _base_images: Dict[str, pygame.Surface] = {}
 _fallbacks: Dict[str, Tuple[int, int, int]] = {}
+_scaled_cache: Dict[Tuple[str, int], pygame.Surface] = {}
 
 
 def _init_base_images():
@@ -65,15 +66,23 @@ def load_images(tile_size: int) -> Dict[str, pygame.Surface]:
     images: Dict[str, pygame.Surface] = {}
 
     for name, img in _base_images.items():
+        cache_key = (name, tile_size)
+        # Reusar superficie escalada si ya existe
+        if cache_key in _scaled_cache:
+            images[name] = _scaled_cache[cache_key]
+            continue
+
         if img is not None:
             try:
-                images[name] = pygame.transform.scale(img, (tile_size, tile_size))
+                surf = pygame.transform.scale(img, (tile_size, tile_size))
             except Exception as e:
                 print(f"[ERROR] Scaling image for {name}: {e}. Using fallback.")
-                images[name] = _create_fallback_surface(_fallbacks.get(name, (255, 0, 255)), tile_size)
+                surf = _create_fallback_surface(_fallbacks.get(name, (255, 0, 255)), tile_size)
         else:
-            images[name] = _create_fallback_surface(_fallbacks.get(name, (255, 0, 255)), tile_size)
+            surf = _create_fallback_surface(_fallbacks.get(name, (255, 0, 255)), tile_size)
 
+        _scaled_cache[cache_key] = surf
+        images[name] = surf
 
     return images
 
