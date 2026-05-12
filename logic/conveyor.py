@@ -235,9 +235,11 @@ class ConveyorSystem:
             dst_belt = self.get_belt(dst_pos[0], dst_pos[1])
             if src_belt is None or dst_belt is None:
                 continue
-            # mover item
+            # mover item y actualizar banderas de ocupación
             src_belt.item = None
+            src_belt.is_empty = True
             dst_belt.item = item
+            dst_belt.is_empty = False
             dst_belt.item.progress = 0.0
 
     def _compute_incoming(self, x: int, y: int):
