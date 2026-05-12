@@ -39,7 +39,7 @@ BASE_SEED = None
 CHUNK_CACHE_RADIUS = 3
 
 USER_OPTIONS = {
-    "screen": 2,
+    "screen": 1,
     "fullscreen": False,
     "fps": 60,
 }
