@@ -1,5 +1,5 @@
 from numpy import random
-from settings import MAP_SIZE, TERRAINS, MATERIALS
+from settings import MAP_SIZE, TERRAINS, ORES
 import time
 
 
@@ -9,10 +9,10 @@ def _place_cluster(tiles, material, cx, cy):
     Se intenta colocar en cada celda del cluster si el terreno permite colocar.
     No sobrescribe minerales ya colocados y no coloca en terrenos con canPlace=False (agua).
     """
-    size = MATERIALS.get(material, {}).get("cluster", 1)
+    size = ORES.get(material, {}).get("cluster", 1)
     half = size // 2
 
-    fill_prob = MATERIALS.get(material, {}).get("cluster_fill_prob", 1.0)
+    fill_prob = ORES.get(material, {}).get("cluster_fill_prob", 1.0)
 
     for i in range(cx - half, cx - half + size):
         for j in range(cy - half, cy - half + size):
@@ -55,7 +55,7 @@ def generate_map(seed=None):
     """Genera el mapa y devuelve (tiles, seed).
 
     La generación se hace en dos pasadas: una para terrenos y otra
-    para colocar minerales como clusters según `MATERIALS[<name>]["cluster"]`.
+    para colocar minerales como clusters según `ORES[<name>]["cluster"]`.
     Si una celda del cluster es agua no se coloca en esa celda, pero sí en el resto.
     """
     if seed is None:
@@ -163,10 +163,10 @@ def generate_chunk(chunk_x, chunk_y, seed=None, chunk_size=8):
                     _place_terrain_cluster(tiles, terrain_name, base_x + lx, base_y + ly)
 
     # Preparar lista de materiales y probabilidades si están definidas
-    material_keys = list(MATERIALS.keys())
+    material_keys = list(ORES.keys())
     spawn_probs = None
-    if material_keys and all("spawn_prob" in MATERIALS[m] for m in material_keys):
-        probs = [MATERIALS[m]["spawn_prob"] for m in material_keys]
+    if material_keys and all("spawn_prob" in ORES[m] for m in material_keys):
+        probs = [ORES[m]["spawn_prob"] for m in material_keys]
         total = sum(probs) or 1
         spawn_probs = [p / total for p in probs]
 

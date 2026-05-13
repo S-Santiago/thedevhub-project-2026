@@ -1,5 +1,6 @@
 from enums import Direction
 from logic.conveyor import ConveyorBelt, ConveyorCurve
+from sound_manager import play_place_sound
 
 MACHINE_CONVEYOR = "CONVEYOR"
 MACHINE_DRILL = "DRILL"
@@ -60,7 +61,13 @@ def _place_conveyor(map_manager, conveyor_system, tile_x, tile_y, selected_direc
     if conveyor_system.get_belt(tile_x, tile_y) is not None:
         return False
 
-    if not map_manager.place_machine(tile_x, tile_y, MACHINE_CONVEYOR):
+    machine_data = {
+        "machine": MACHINE_CONVEYOR,
+        "direction": getattr(selected_direction, "name", str(selected_direction)),
+        "in_direction": getattr(selected_in_direction, "name", None) if selected_in_direction else None,
+    }
+
+    if not map_manager.place_machine(tile_x, tile_y, MACHINE_CONVEYOR, machine_data=machine_data):
         return False
 
     # Determinar entrada (incoming): si se especifica `selected_in_direction` usarla,
@@ -77,9 +84,17 @@ def _place_conveyor(map_manager, conveyor_system, tile_x, tile_y, selected_direc
         except Exception:
             incoming = None
 
-    # Persistir metadatos de dirección en map_manager.machine_overrides para mantener la rotación
+    # Mantener persistidos los metadatos de la cinta para que la partida se reconstruya igual.
     try:
-        map_manager.machine_overrides[(tile_x, tile_y)] = {"machine": MACHINE_CONVEYOR, "direction": getattr(selected_direction, "name", str(selected_direction)), "in_direction": getattr(incoming, "name", None) if incoming else None}
+        map_manager.set_machine_data(
+            tile_x,
+            tile_y,
+            {
+                "machine": MACHINE_CONVEYOR,
+                "direction": getattr(selected_direction, "name", str(selected_direction)),
+                "in_direction": getattr(incoming, "name", None) if incoming else None,
+            },
+        )
     except Exception:
         pass
 
@@ -92,6 +107,13 @@ def _place_conveyor(map_manager, conveyor_system, tile_x, tile_y, selected_direc
     except Exception:
         # Fallback sencillo
         conveyor_system.add_belt(ConveyorBelt(tile_x, tile_y, selected_direction, incoming_direction=incoming))
+    
+    # Reproducir sonido de colocación
+    try:
+        play_place_sound(MACHINE_CONVEYOR)
+    except Exception:
+        pass
+    
     return True
 
 
@@ -110,11 +132,27 @@ def _place_drill(map_manager, drill_system, tile_x, tile_y, selected_direction):
     if not mineral_kind:
         return False
 
-    if not map_manager.place_machine(tile_x, tile_y, MACHINE_DRILL):
+    if not map_manager.place_machine(
+        tile_x,
+        tile_y,
+        MACHINE_DRILL,
+        machine_data={
+            "machine": MACHINE_DRILL,
+            "direction": getattr(selected_direction, "name", str(selected_direction)),
+            "mineral": mineral_kind,
+        },
+    ):
         return False
 
     drill = drill_system.create_drill(tile_x, tile_y, selected_direction, mineral_kind)
     drill_system.add_drill(drill)
+    
+    # Reproducir sonido de colocación
+    try:
+        play_place_sound(MACHINE_DRILL)
+    except Exception:
+        pass
+    
     return True
 
 

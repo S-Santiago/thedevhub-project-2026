@@ -5,7 +5,7 @@ import pygame
 from pathlib import Path
 from typing import Dict, Tuple
 
-from settings import ASSETS_PATH, TERRAINS, MATERIALS, MACHINES
+from settings import ASSETS_PATH, TERRAINS, ORES, MINERALS, MACHINES
 
 _base_images: Dict[str, pygame.Surface] = {}
 _fallbacks: Dict[str, Tuple[int, int, int]] = {}
@@ -41,12 +41,15 @@ def _load_directory_assets(base_name: str, assets_dir: Path, category_name: str)
     for child in sorted(assets_dir.iterdir()):
         if not child.is_file() or child.suffix.lower() not in (".png", ".jpg", ".jpeg"):
             continue
-        key = f"{base_name}_{child.stem.upper()}"
+        if category_name == "MINERALS":
+            key = f"MINERAL_{child.stem.upper()}"
+        else:
+            key = f"{base_name}_{child.stem.upper()}"
         _register_asset(key, _load_image(child), fallback_color)
 
-    # Asegurar la clave base aunque el contenido esté en subarchivos.
-    _base_images.setdefault(base_name, None)
-    _fallbacks.setdefault(base_name, fallback_color)
+    base_key = f"MINERAL_{base_name}" if category_name == "MINERALS" else base_name
+    _base_images.setdefault(base_key, None)
+    _fallbacks.setdefault(base_key, fallback_color)
 
 
 def _init_base_images():
@@ -55,7 +58,8 @@ def _init_base_images():
 
     sources = [
         ("TERRAINS", TERRAINS),
-        ("MATERIALS", MATERIALS),
+        ("ORES", ORES),
+        ("MINERALS", MINERALS),
         ("MACHINES", MACHINES),
     ]
 
@@ -67,17 +71,18 @@ def _init_base_images():
             file_path = assets_dir / f"{name.lower()}.png"
             dir_path = assets_dir / name
             fallback_color = _fallback_color(category_name)
+            asset_key = f"MINERAL_{name}" if category_name == "MINERALS" else name
 
             # Si existe una carpeta para este asset (ej. MACHINES/CONVEYOR/RIGHT.png), cargar sus hijos
             if dir_path.exists() and dir_path.is_dir():
                 _load_directory_assets(name, dir_path, category_name)
 
-            # Si existe un fichero único (ej. machines/conveyor.png), cargarlo
+            # Si existe un fichero único (ej. minerals/coal.png), cargarlo
             elif file_path.exists():
-                _register_asset(name, _load_image(file_path), fallback_color)
+                _register_asset(asset_key, _load_image(file_path), fallback_color)
 
             else:
-                _register_asset(name, None, fallback_color)
+                _register_asset(asset_key, None, fallback_color)
 
 
 def load_images(tile_size: int) -> Dict[str, pygame.Surface]:
