@@ -8,6 +8,7 @@ from build_system import (
     screen_to_tile,
 )
 from enums import Direction
+from sound_manager import play_delete_sound
 import GUI
 
 
@@ -93,7 +94,16 @@ def process_event(
                             conveyor_system.rotate_belt(tx, ty, new_dir)
                             # Actualizar persistencia en map_manager si está presente
                             if map_manager is not None:
-                                map_manager.machine_overrides[(tx, ty)] = {"machine": MACHINE_CONVEYOR, "direction": new_dir.name}
+                                incoming = getattr(belt, "incoming_direction", getattr(belt, "in_direction", None))
+                                map_manager.set_machine_data(
+                                    tx,
+                                    ty,
+                                    {
+                                        "machine": MACHINE_CONVEYOR,
+                                        "direction": new_dir.name,
+                                        "in_direction": getattr(incoming, "name", None) if incoming else None,
+                                    },
+                                )
                         else:
                             # No hay cinta; rotar la selección global
                             current_direction = state.get("selected_direction", Direction.RIGHT)
@@ -114,7 +124,16 @@ def process_event(
                             new_dir = rotate_machine_direction_ccw(belt.direction)
                             conveyor_system.rotate_belt(tx, ty, new_dir)
                             if map_manager is not None:
-                                map_manager.machine_overrides[(tx, ty)] = {"machine": MACHINE_CONVEYOR, "direction": new_dir.name}
+                                incoming = getattr(belt, "incoming_direction", getattr(belt, "in_direction", None))
+                                map_manager.set_machine_data(
+                                    tx,
+                                    ty,
+                                    {
+                                        "machine": MACHINE_CONVEYOR,
+                                        "direction": new_dir.name,
+                                        "in_direction": getattr(incoming, "name", None) if incoming else None,
+                                    },
+                                )
                         else:
                             current_direction = state.get("selected_direction", Direction.RIGHT)
                             state["selected_direction"] = rotate_machine_direction_ccw(current_direction)
@@ -127,11 +146,24 @@ def process_event(
                     tile = context_menu.get("tile")
                     if tile is not None and map_manager is not None:
                         tx, ty = tile
+                        # Determinar qué tipo de máquina se está eliminando para reproducir el sonido correcto
+                        deleted_machine = None
                         if conveyor_system is not None:
-                            conveyor_system.remove_belt(tx, ty)
+                            if conveyor_system.get_belt(tx, ty) is not None:
+                                deleted_machine = MACHINE_CONVEYOR
+                                conveyor_system.remove_belt(tx, ty)
                         if drill_system is not None:
-                            drill_system.remove_drill(tx, ty)
+                            if drill_system.get_drill(tx, ty) is not None:
+                                deleted_machine = MACHINE_DRILL
+                                drill_system.remove_drill(tx, ty)
                         map_manager.clear_machine(tx, ty)
+                        
+                        # Reproducir sonido de eliminación
+                        if deleted_machine is not None:
+                            try:
+                                play_delete_sound(deleted_machine)
+                            except Exception:
+                                pass
 
                 elif opt.get("machine") is not None:
                     # seleccionar máquina y, si viene, la dirección asociada
@@ -256,15 +288,22 @@ def process_event(
         min_w = state["baseline_map_pixel_size"]
         min_h = state["baseline_map_pixel_size"]
 
+        # Guardar el punto central del mundo actual para preservarlo tras el resize
+        center_world_x = -state["offset_x"] + (state["window_width"] / 2)
+        center_world_y = -state["offset_y"] + (state["window_height"] / 2)
+
         new_w = max(event.w, min_w)
         new_h = max(event.h, min_h)
 
         state["window_width"] = int(new_w)
         state["window_height"] = int(new_h)
-        state["offset_x"] = (state["window_width"] - state["map_pixel_size"]) // 2
-        state["offset_y"] = (state["window_height"] - state["map_pixel_size"]) // 2
+
+        # Recalcular offset para que el mismo punto del mundo quede centrado
+        state["offset_x"] = int(-center_world_x + (state["window_width"] / 2))
+        state["offset_y"] = int(-center_world_y + (state["window_height"] / 2))
         state["offset_x_f"] = float(state["offset_x"])
         state["offset_y_f"] = float(state["offset_y"])
+
         screen = pygame.display.set_mode((state["window_width"], state["window_height"]), flags, display=display_idx)
 
         if map_manager is not None:

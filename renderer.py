@@ -107,9 +107,12 @@ def render_frame(
                     item_y = offset_y + pixel_pos[1]
                     
                     kind = belt.item.kind
-                    if kind in images and images[kind] is not None:
+                    mineral_key = f"MINERAL_{kind}"
+                    img_key = mineral_key if mineral_key in images else kind
+                    
+                    if img_key in images and images[img_key] is not None:
                         # Dibujamos el material un poco más pequeño para que quepa en la cinta
-                        scaled_item = pygame.transform.scale(images[kind], (int(tile_size * 0.6), int(tile_size * 0.6)))
+                        scaled_item = pygame.transform.scale(images[img_key], (int(tile_size * 0.6), int(tile_size * 0.6)))
                         # Centramos el ítem
                         screen.blit(scaled_item, (item_x + tile_size * 0.2, item_y + tile_size * 0.2))
 
