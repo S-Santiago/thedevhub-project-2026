@@ -3,7 +3,7 @@ from typing import Optional
 
 _debug_font: Optional[pygame.font.Font] = None
 import GUI
-from build_system import MACHINE_CONVEYOR, MACHINE_DRILL
+from build_system import MACHINE_CONVEYOR, MACHINE_DRILL, MACHINE_INVENTORY
 from enums import Direction
 
 
@@ -107,12 +107,9 @@ def render_frame(
                     item_y = offset_y + pixel_pos[1]
                     
                     kind = belt.item.kind
-                    mineral_key = f"MINERAL_{kind}"
-                    img_key = mineral_key if mineral_key in images else kind
-                    
-                    if img_key in images and images[img_key] is not None:
+                    if kind in images and images[kind] is not None:
                         # Dibujamos el material un poco más pequeño para que quepa en la cinta
-                        scaled_item = pygame.transform.scale(images[img_key], (int(tile_size * 0.6), int(tile_size * 0.6)))
+                        scaled_item = pygame.transform.scale(images[kind], (int(tile_size * 0.6), int(tile_size * 0.6)))
                         # Centramos el ítem
                         screen.blit(scaled_item, (item_x + tile_size * 0.2, item_y + tile_size * 0.2))
 
@@ -139,6 +136,34 @@ def render_frame(
                     (int(pos_x + tile_size * 0.85), int(pos_y + tile_size * 0.15)),
                     radius,
                 )
+
+    # Dibujar máquinas genéricas (p.ej. cofres / inventarios) a partir de tile['machine']
+    try:
+        for (x, y), data in tiles.items():
+            machine = data.get("machine")
+            if not machine:
+                continue
+
+            # Normalizar a nombre y asset_key
+            asset_key = None
+            machine_name = None
+            if isinstance(machine, dict):
+                machine_name = machine.get("machine")
+                asset_key = machine.get("asset_key")
+            else:
+                machine_name = machine
+
+            if machine_name == MACHINE_INVENTORY or machine_name == "INVENTORY":
+                # Si hay una key explícita, usarla; si no, intentar 'INVENTORY'
+                if asset_key is None:
+                    asset_key = "INVENTORY"
+
+                if asset_key in images and images[asset_key] is not None:
+                    px = offset_x + (x * tile_size)
+                    py = offset_y + (y * tile_size)
+                    screen.blit(images[asset_key], (px, py))
+    except Exception:
+        pass
 
     # Dibujar previsualización de colocación (hover) si la hay en debug['preview']
     if debug is not None:
@@ -246,38 +271,15 @@ def render_frame(
             print("[ERROR] drawing preview:", e)
 
     # Overlay de debug
-    if debug is not None:
+    if debug is not None and debug.get("fps") is not None:
         try:
             font = _get_debug_font()
 
             lines = []
             lines.append(f"FPS: {debug.get('fps')}")
-            mx, my = debug.get('mouse_screen', (None, None))  # Cursor respecto a la ventana
-            lines.append(f"Mouse: {mx}, {my}")
-            wx, wy = debug.get('mouse_world', (None, None))  # Cursor respecto al mapa
-            wx_str = int(wx) if wx is not None else None
-            wy_str = int(wy) if wy is not None else None
-            lines.append(f"World: {wx_str},{wy_str}")
             tx, ty = debug.get('tile', (None, None))
-            tdata = debug.get('tile_data')
-            if tdata:
-                lines.append(f"Tile: {tx}, {ty} ({tdata.get('terrain')}, {tdata.get('mineral')})")
-            else:
-                lines.append(f"Tile: {tx}, {ty}")
-
+            lines.append(f"X: {tx}  Y: {ty}")
             lines.append(f"Seed: {debug.get('seed')}")
-            belts = debug.get("belts")
-            drills = debug.get("drills")
-            if belts is not None or drills is not None:
-                lines.append(f"Belts: {belts} | Drills: {drills}")
-
-            selected_machine = debug.get("selected_machine")
-            selected_direction = debug.get("selected_direction")
-            lines.append(f"Build: {selected_machine if selected_machine else 'NONE'}")
-            if selected_machine:
-                lines.append(f"Dir: {selected_direction}")
-            lines.append("1=Cinta | 2=Taladro | 0=None | R=Rotate")
-            lines.append("WASD=Move camera | Click izq=Place")
 
             padding = 6
             line_height = font.get_linesize()

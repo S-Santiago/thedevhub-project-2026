@@ -1,10 +1,10 @@
 from enums import Direction
 from logic.conveyor import ConveyorBelt, ConveyorCurve
-from sound_manager import play_place_sound
+from logic.inventory import MACHINE_INVENTORY
 
 MACHINE_CONVEYOR = "CONVEYOR"
 MACHINE_DRILL = "DRILL"
-AVAILABLE_MACHINES = (MACHINE_CONVEYOR, MACHINE_DRILL)
+AVAILABLE_MACHINES = (MACHINE_CONVEYOR, MACHINE_DRILL, MACHINE_INVENTORY)
 
 _DIRECTION_ORDER = (
     Direction.RIGHT,
@@ -61,13 +61,7 @@ def _place_conveyor(map_manager, conveyor_system, tile_x, tile_y, selected_direc
     if conveyor_system.get_belt(tile_x, tile_y) is not None:
         return False
 
-    machine_data = {
-        "machine": MACHINE_CONVEYOR,
-        "direction": getattr(selected_direction, "name", str(selected_direction)),
-        "in_direction": getattr(selected_in_direction, "name", None) if selected_in_direction else None,
-    }
-
-    if not map_manager.place_machine(tile_x, tile_y, MACHINE_CONVEYOR, machine_data=machine_data):
+    if not map_manager.place_machine(tile_x, tile_y, MACHINE_CONVEYOR):
         return False
 
     # Determinar entrada (incoming): si se especifica `selected_in_direction` usarla,
@@ -84,17 +78,9 @@ def _place_conveyor(map_manager, conveyor_system, tile_x, tile_y, selected_direc
         except Exception:
             incoming = None
 
-    # Mantener persistidos los metadatos de la cinta para que la partida se reconstruya igual.
+    # Persistir metadatos de dirección en map_manager.machine_overrides para mantener la rotación
     try:
-        map_manager.set_machine_data(
-            tile_x,
-            tile_y,
-            {
-                "machine": MACHINE_CONVEYOR,
-                "direction": getattr(selected_direction, "name", str(selected_direction)),
-                "in_direction": getattr(incoming, "name", None) if incoming else None,
-            },
-        )
+        map_manager.machine_overrides[(tile_x, tile_y)] = {"machine": MACHINE_CONVEYOR, "direction": getattr(selected_direction, "name", str(selected_direction)), "in_direction": getattr(incoming, "name", None) if incoming else None}
     except Exception:
         pass
 
@@ -107,13 +93,6 @@ def _place_conveyor(map_manager, conveyor_system, tile_x, tile_y, selected_direc
     except Exception:
         # Fallback sencillo
         conveyor_system.add_belt(ConveyorBelt(tile_x, tile_y, selected_direction, incoming_direction=incoming))
-    
-    # Reproducir sonido de colocación
-    try:
-        play_place_sound(MACHINE_CONVEYOR)
-    except Exception:
-        pass
-    
     return True
 
 
@@ -132,27 +111,41 @@ def _place_drill(map_manager, drill_system, tile_x, tile_y, selected_direction):
     if not mineral_kind:
         return False
 
-    if not map_manager.place_machine(
-        tile_x,
-        tile_y,
-        MACHINE_DRILL,
-        machine_data={
-            "machine": MACHINE_DRILL,
-            "direction": getattr(selected_direction, "name", str(selected_direction)),
-            "mineral": mineral_kind,
-        },
-    ):
+    if not map_manager.place_machine(tile_x, tile_y, MACHINE_DRILL):
         return False
 
     drill = drill_system.create_drill(tile_x, tile_y, selected_direction, mineral_kind)
     drill_system.add_drill(drill)
-    
-    # Reproducir sonido de colocación
+    return True
+
+
+def _place_inventory(map_manager, inventory_system, tile_x, tile_y):
+    """Coloca un inventario (cofre) en la celda y registra la máquina en el InventorySystem."""
+    if inventory_system is None:
+        return False
+
+    if inventory_system.get_inventory(tile_x, tile_y) is not None:
+        return False
+
+    tile = map_manager.get_tile(tile_x, tile_y, ensure_chunk=True)
+    if tile is None:
+        return False
+
+    if not map_manager.place_machine(tile_x, tile_y, MACHINE_INVENTORY):
+        return False
+
+    # Persistir metadatos: asignar asset del cofre existente en los assets de CONVEYOR (Cofre.png)
     try:
-        play_place_sound(MACHINE_DRILL)
+        map_manager.machine_overrides[(tile_x, tile_y)] = {"machine": MACHINE_INVENTORY, "asset_key": "CONVEYOR_COFRE"}
     except Exception:
         pass
-    
+
+    # Registrar en el sistema de inventarios
+    try:
+        inventory_system.create_inventory(tile_x, tile_y)
+    except Exception:
+        pass
+
     return True
 
 
@@ -165,6 +158,7 @@ def place_selected_machine(
     selected_direction,
     drill_system=None,
     selected_in_direction=None,
+    inventory_system=None,
 ):
     """Coloca la máquina seleccionada si la casilla y los sistemas lo permiten.
 
@@ -188,5 +182,8 @@ def place_selected_machine(
             tile_y,
             selected_direction,
         )
+
+    if selected_machine == MACHINE_INVENTORY:
+        return _place_inventory(map_manager, inventory_system, tile_x, tile_y)
 
     return False

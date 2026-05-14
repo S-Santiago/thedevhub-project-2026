@@ -12,7 +12,7 @@ _fallbacks: Dict[str, Tuple[int, int, int]] = {}
 _scaled_cache: Dict[Tuple[str, int], pygame.Surface] = {}
 
 
-def resource_path(relative_path):
+def resource_path(relative_path: str) -> str:
     """Obtiene la ruta absoluta al recurso, funciona en entorno de desarrollo y en PyInstaller"""
     if hasattr(sys, '_MEIPASS'):
         base_path = Path(sys._MEIPASS)
@@ -21,7 +21,7 @@ def resource_path(relative_path):
     return str(base_path / relative_path)
 
 
-def default_save_root():
+def default_save_root() -> Path:
     """Devuelve la carpeta de guardados por defecto."""
     if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
         if os.name == "nt":
@@ -97,6 +97,17 @@ def _init_base_images():
 
             else:
                 _register_asset(asset_key, None, fallback_color)
+
+    # Alias útiles: permitir referirse al cofre como 'INVENTORY' o 'COFRE'
+    # si existe el asset 'CONVEYOR_COFRE' dentro de assets/MACHINES/CONVEYOR
+    try:
+        if "CONVEYOR_COFRE" in _base_images and _base_images.get("CONVEYOR_COFRE") is not None:
+            _base_images.setdefault("INVENTORY", _base_images.get("CONVEYOR_COFRE"))
+            _fallbacks.setdefault("INVENTORY", _fallbacks.get("CONVEYOR_COFRE", (100, 100, 100)))
+            _base_images.setdefault("COFRE", _base_images.get("CONVEYOR_COFRE"))
+            _fallbacks.setdefault("COFRE", _fallbacks.get("CONVEYOR_COFRE", (100, 100, 100)))
+    except Exception:
+        pass
 
 
 def load_images(tile_size: int) -> Dict[str, pygame.Surface]:

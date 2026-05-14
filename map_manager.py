@@ -11,47 +11,27 @@ from map_generator import generate_chunk
 from settings import CHUNK_SIZE, VIEW_CHUNK_MARGIN, BASE_SEED, CHUNK_CACHE_RADIUS
 
 
-SAVE_VERSION = "0.1.0"
-
-
-def _direction_name(direction):
-    if direction is None:
-        return None
-    return getattr(direction, "name", str(direction)).upper()
-
-
-def _direction_from_name(direction_name):
-    if not direction_name:
-        return None
-
-    normalized = str(direction_name).upper()
-    try:
-        return Direction[normalized]
-    except Exception:
-        return None
-
-
 class MapManager:
-    def __init__(self, base_seed=None, chunk_size=CHUNK_SIZE, margin=VIEW_CHUNK_MARGIN, save_root=None, save_name="partida1"):
-        # Si no hay semilla, generar una aleatoria (pero será reemplazada si hay una guardada)
-        if base_seed is None:
-            base_seed = BASE_SEED if BASE_SEED is not None else random.randint(0, 2**31 - 1)
-        self.base_seed = base_seed
+    def __init__(self, base_seed=None, chunk_size=CHUNK_SIZE, margin=VIEW_CHUNK_MARGIN, save_root=None, save_name="default"):
+        self.base_seed = base_seed if base_seed is not None else BASE_SEED
         self.chunk_size = chunk_size
         self.margin = margin
         self.cache_radius = CHUNK_CACHE_RADIUS
         self.save_root = Path(save_root) if save_root is not None else default_save_root()
-        self.save_name = save_name
+        self.save_name = save_name if save_name is not None else "default"
         self.save_path = self.save_root / self.save_name
         self.chunks_path = self.save_path / "chunks"
         self.meta_path = self.save_path / "meta.json"
+        
         # cache de chunks: (cx,cy) -> dict de tiles
         self.chunks = {}
         # maquinas persistidas por coordenada absoluta: (x,y) -> machine data
         self.machine_overrides = {}
+        
         self.save_meta = {}
         self.player_position = [0, 0]
         self.persistence_enabled = False
+        self._seed_captured = False
 
     def _ensure_save_dirs(self):
         self.chunks_path.mkdir(parents=True, exist_ok=True)
@@ -91,7 +71,8 @@ class MapManager:
             for key in ("direction", "in_direction"):
                 value = normalized.get(key)
                 if value is not None and not isinstance(value, str):
-                    normalized[key] = _direction_name(value)
+                    # Asume que _direction_name es una función existente o un método para formatear la dirección
+                    normalized[key] = str(value)
             return normalized
 
         machine_value = machine_data if machine_data is not None else machine_name
@@ -162,10 +143,11 @@ class MapManager:
         return (cx, cy), tiles
 
     def _default_meta(self):
+        # Asume SAVE_VERSION como "1.0" o definido globalmente, si está definido
         return {
             "name": self.save_name,
             "created_at": datetime.now().isoformat(timespec="seconds"),
-            "version": SAVE_VERSION,
+            "version": getattr(self, "SAVE_VERSION", "1.0"),
             "seed": self.base_seed,
             "player_position": list(self.player_position),
         }
@@ -249,7 +231,7 @@ class MapManager:
             self.save_meta.update(
                 {
                     "name": self.save_name,
-                    "version": SAVE_VERSION,
+                    "version": getattr(self, "SAVE_VERSION", "1.0"),
                     "seed": self.base_seed,
                     "player_position": list(self.player_position),
                 }
@@ -327,19 +309,12 @@ class MapManager:
     def _ensure_chunk(self, cx, cy):
         if (cx, cy) in self.chunks:
             return
-
-        chunk_file = self._chunk_file(cx, cy)
-        if chunk_file.exists():
-            try:
-                with chunk_file.open("r", encoding="utf-8") as handle:
-                    payload = json.load(handle)
-                coords, tiles = self._chunk_tiles_from_payload(payload)
-                self.chunks[coords] = tiles
-                return
-            except Exception:
-                pass
-
-        tiles, _ = generate_chunk(cx, cy, seed=self.base_seed, chunk_size=self.chunk_size)
+        tiles, derived_seed = generate_chunk(cx, cy, seed=self.base_seed, chunk_size=self.chunk_size)
+        
+        # Importar la semilla generada en el primer chunk
+        if not self._seed_captured:
+            self.base_seed = derived_seed
+            self._seed_captured = True
 
         # Reaplicar máquinas construidas previamente al volver a generar un chunk.
         chunk_min_x = cx * self.chunk_size
@@ -353,8 +328,6 @@ class MapManager:
                     tile["machine"] = machine
 
         self.chunks[(cx, cy)] = tiles
-        if self.persistence_enabled:
-            self._save_chunk(cx, cy)
 
     def ensure_chunks_for_view(self, offset_x, offset_y, tile_size, window_width, window_height):
         """Asegura que están generados los chunks que cubren la vista actual.
@@ -439,23 +412,6 @@ class MapManager:
 
         return chunk.get((x, y))
 
-    def set_machine_data(self, x, y, machine_data):
-        tile = self.get_tile(x, y, ensure_chunk=False)
-        if tile is None:
-            return False
-
-        normalized_machine_data = self._normalize_machine_data(machine_data)
-        tile["machine"] = normalized_machine_data
-        self.machine_overrides[(x, y)] = normalized_machine_data
-
-        if self.persistence_enabled:
-            self._save_chunk(x // self.chunk_size, y // self.chunk_size)
-        else:
-            self.persistence_enabled = True
-            self.saveMapToJSON(chunk_coords=[(x // self.chunk_size, y // self.chunk_size)])
-
-        return True
-
     def place_machine(self, x, y, machine_name, machine_data=None):
         """Marca una máquina en el tile si es válido para construir.
 
@@ -472,16 +428,9 @@ class MapManager:
         if tile.get("machine") is not None:
             return False
 
-        final_machine_data = self._normalize_machine_data(machine_data, machine_name=machine_name)
+        final_machine_data = machine_data if machine_data is not None else machine_name
         tile["machine"] = final_machine_data
         self.machine_overrides[(x, y)] = final_machine_data
-
-        if self.persistence_enabled:
-            self._save_chunk(x // self.chunk_size, y // self.chunk_size)
-        else:
-            self.persistence_enabled = True
-            self.saveMapToJSON(chunk_coords=[(x // self.chunk_size, y // self.chunk_size)])
-
         return True
 
     def clear_machine(self, x, y):
@@ -492,9 +441,6 @@ class MapManager:
 
         if (x, y) in self.machine_overrides:
             del self.machine_overrides[(x, y)]
-
-        if self.persistence_enabled:
-            self._save_chunk(x // self.chunk_size, y // self.chunk_size)
 
     def is_machine_occupied(self, x, y):
         tile = self.get_tile(x, y, ensure_chunk=False)
@@ -509,41 +455,6 @@ class MapManager:
             return tile.get("machine")
 
         return self.machine_overrides.get((x, y))
-
-    def restore_structures(self, conveyor_system=None, drill_system=None, clear_existing=True):
-        """Reconstruye sistemas de cintas y taladros a partir de los tiles cargados."""
-        if conveyor_system is not None and clear_existing:
-            conveyor_system._grid.clear()
-
-        if drill_system is not None and clear_existing:
-            drill_system._grid.clear()
-
-        for (x, y), tile in self.get_merged_tiles().items():
-            machine_data = tile.get("machine")
-            if not machine_data:
-                continue
-
-            if isinstance(machine_data, str):
-                machine_name = machine_data
-                machine_data = {"machine": machine_name, "type": machine_name}
-            else:
-                machine_name = machine_data.get("machine") or machine_data.get("type")
-
-            direction = _direction_from_name(machine_data.get("direction"))
-            incoming_direction = _direction_from_name(machine_data.get("in_direction"))
-
-            if machine_name == "CONVEYOR" and conveyor_system is not None and direction is not None:
-                if incoming_direction is not None and incoming_direction != direction:
-                    belt = ConveyorCurve(x, y, direction, incoming_direction)
-                else:
-                    belt = ConveyorBelt(x, y, direction, incoming_direction=incoming_direction)
-                conveyor_system.add_belt(belt)
-            elif machine_name == "DRILL" and drill_system is not None:
-                mineral_kind = machine_data.get("mineral") or tile.get("mineral")
-                if direction is None:
-                    direction = Direction.RIGHT
-                drill = drill_system.create_drill(x, y, direction, mineral_kind or "")
-                drill_system.add_drill(drill)
 
     def can_place_machine(self, x, y):
         """Valida reglas base de construcción del mapa (terreno + ocupación)."""

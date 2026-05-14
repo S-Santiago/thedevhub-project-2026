@@ -2,14 +2,14 @@ from dataclasses import dataclass
 from typing import Dict, Tuple
 
 from settings import (
-    ORES,
+    MATERIALS,
     DRILL_DEFAULT_CYCLE_SECONDS,
     DRILL_OUTPUT_BUFFER_CAPACITY,
 )
 
 
 def _drill_cycle_seconds(mineral_kind: str) -> float:
-    mineral_cfg = ORES.get(mineral_kind, {})
+    mineral_cfg = MATERIALS.get(mineral_kind, {})
     value = mineral_cfg.get("drill_cycle_seconds", DRILL_DEFAULT_CYCLE_SECONDS)
     return float(value) if value and value > 0 else DRILL_DEFAULT_CYCLE_SECONDS
 

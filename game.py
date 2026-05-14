@@ -2,10 +2,28 @@ import ctypes
 import os
 import pygame
 import platform
-import sys
 import traceback
 from pathlib import Path
 
+from settings import (
+    APP_ID,
+    APP_NAME,
+    MAP_SIZE,
+    MIN_TILE_SIZE,
+    CAMERA_SPEED,
+    USER_OPTIONS,
+    BASE_SEED,
+)
+
+from build_system import MACHINE_CONVEYOR
+from map_manager import MapManager
+from asset_manager import default_save_root, load_images, resource_path
+from renderer import render_frame
+from input_handler import process_event
+from logic.conveyor import ConveyorSystem
+from logic.drill_system import DrillSystem
+from logic.inventory import InventorySystem
+from enums import Direction
 
 
 def _show_save_slot_dialog():
@@ -234,41 +252,6 @@ def _show_save_slot_dialog():
     return result
 
 
-from settings import (
-    APP_ID,
-    APP_NAME,
-    MAP_SIZE,
-    MIN_TILE_SIZE,
-    CAMERA_SPEED,
-    USER_OPTIONS,
-)
-
-from build_system import MACHINE_CONVEYOR
-from map_manager import MapManager
-from asset_manager import default_save_root, load_images, resource_path
-from renderer import render_frame
-from input_handler import process_event
-from logic.conveyor import ConveyorSystem
-from logic.drill_system import DrillSystem
-from enums import Direction
-
-
-def _list_available_saves(save_root: Path):
-    if not save_root.exists():
-        return []
-
-    save_names = []
-    for child in sorted(save_root.iterdir()):
-        if child.is_dir() and (child / "meta.json").exists():
-            save_names.append(child.name)
-    return save_names
-
-
-def _choose_save_name(save_root: Path):
-    """Choose save slot using dialog"""
-    return _show_save_slot_dialog()
-
-
 def run():
     if platform.system() == "Windows":
         try:
@@ -277,8 +260,7 @@ def run():
             print(f"No se pudo establecer App ID de Windows: {e}")
 
     # Elegir slot antes de inicializar la ventana principal del juego.
-    save_root = default_save_root()
-    selected_save_name = _choose_save_name(save_root)
+    selected_save_name = _show_save_slot_dialog()
     
     # Si el usuario cierra el diálogo de selección, salir de la aplicación
     if selected_save_name is None:
@@ -287,10 +269,6 @@ def run():
 
     pygame.init()
     pygame.display.set_caption(APP_NAME)
-
-    # Inicializar el gestor de sonidos
-    from sound_manager import get_sound_manager
-    sound_manager = get_sound_manager()
 
     # Intentar cargar el icono si existe (no crítico)
     icon_path = "<no-resuelto>"
@@ -301,13 +279,7 @@ def run():
     except Exception as e:
         # Si estamos en modo ventana, esto nos salvará la vida para depurar
         error_msg = f"Ruta intentada:\n{icon_path}\n\nError:\n{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        if platform.system() == "Windows":
-            try:
-                ctypes.windll.user32.MessageBoxW(0, error_msg, "Depuración de Icono", 0)
-            except Exception:
-                print(error_msg)
-        else:
-            print(error_msg)
+        ctypes.windll.user32.MessageBoxW(0, error_msg, "Depuración de Icono", 0)
 
     # Configuración de pantalla
     screens = pygame.display.get_desktop_sizes()
@@ -340,6 +312,7 @@ def run():
     clock = pygame.time.Clock()
 
     # Carga de datos (ahora por chunks)
+    save_root = default_save_root()
     map_manager = MapManager(save_root=save_root, save_name=selected_save_name)
     map_manager.loadMapFromJSON()
     # Centrar la cámara en la posición guardada (player_position almacena la tile central)
@@ -351,13 +324,13 @@ def run():
     except Exception:
         # Fallback a la posición por defecto ya calculada
         pass
+        
     images = load_images(tile_size)
     
     # Inicializar el sistema de cintas
     conveyor_system = ConveyorSystem()
     drill_system = DrillSystem()
-
-    map_manager.restore_structures(conveyor_system, drill_system)
+    inventory_system = InventorySystem()
 
     # Asegurar chunks iniciales centrados en la vista actual
     map_manager.ensure_chunks_for_view(offset_x, offset_y, tile_size, window_width, window_height)
@@ -380,26 +353,10 @@ def run():
         "selected_machine": MACHINE_CONVEYOR,
         "selected_direction": Direction.RIGHT,
         "selected_in_direction": None,
+        "debug_mode": False,
     }
     
     dt = 0.0
-
-    # Aplicar de nuevo la posición guardada a `state` para asegurar consistencia
-    try:
-        px, py = map_manager.player_position
-        px = int(px)
-        py = int(py)
-        off_x = - (px * state["tile_size"]) + (state["window_width"] / 2)
-        off_y = - (py * state["tile_size"]) + (state["window_height"] / 2)
-        state["offset_x"] = int(off_x)
-        state["offset_y"] = int(off_y)
-        state["offset_x_f"] = float(off_x)
-        state["offset_y_f"] = float(off_y)
-        # Also update local variables used elsewhere
-        offset_x = state["offset_x"]
-        offset_y = state["offset_y"]
-    except Exception:
-        pass
 
     while state["running"]:
         dt = clock.tick(USER_OPTIONS["fps"]) / 1000.0
@@ -416,6 +373,7 @@ def run():
                 map_manager,
                 conveyor_system,
                 drill_system,
+                inventory_system,
             )
 
             if new_images is not None:
@@ -449,7 +407,7 @@ def run():
                 state["window_height"],
             )
 
-        conveyor_system.update(dt)
+        conveyor_system.update(dt, map_manager, inventory_system)
         drill_system.update(dt, conveyor_system)
 
         # Preparar información de debug
@@ -507,19 +465,19 @@ def run():
                 "can_place": can_place,
             }
 
-        debug_info = {
-            "fps": round(clock.get_fps(), 1),
-            "mouse_screen": (mx, my),
-            "mouse_world": (wx, wy),
-            "tile": (tx, ty),
-            "tile_data": tile_under,
-            "seed": map_manager.base_seed,
-            "selected_machine": state.get("selected_machine"),
-            "selected_direction": state.get("selected_direction"),
-            "belts": len(conveyor_system),
-            "drills": len(drill_system),
-            "preview": preview,
-        }
+        debug_info = {"preview": preview}
+        if state.get("debug_mode", False):
+            current_seed = map_manager.base_seed if map_manager.base_seed is not None else BASE_SEED
+            debug_info.update({
+                "fps": round(clock.get_fps(), 1),
+                "mouse_screen": (mx, my),
+                "mouse_world": (wx, wy),
+                "tile": (tx, ty),
+                "tile_data": tile_under,
+                "seed": current_seed,
+                "selected_machine": state.get("selected_machine"),
+                "selected_direction": state.get("selected_direction"),
+            })
 
         render_frame(
             screen,
@@ -534,14 +492,5 @@ def run():
             state.get("context_menu"),
         )
         
-
-    center_world_x = -state["offset_x"] + (state["window_width"] / 2)
-    center_world_y = -state["offset_y"] + (state["window_height"] / 2)
-    center_tile_x = int(center_world_x // state["tile_size"])
-    center_tile_y = int(center_world_y // state["tile_size"])
-
-    map_manager.saveMapToJSON(
-        player_position=(center_tile_x, center_tile_y),
-    )
 
     pygame.quit()

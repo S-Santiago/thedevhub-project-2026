@@ -1,17 +1,10 @@
-ORES = {
+MATERIALS = {
     "WOOD": {"cluster": 1, "spawn_prob": 0.15, "cluster_fill_prob": 0.2},
     "STONE": {"cluster": 2, "spawn_prob": 0.20, "cluster_fill_prob": 0.2},
     "COPPER": {"cluster": 2, "spawn_prob": 0.20, "cluster_fill_prob": 0.2},
     "IRON": {"cluster": 3, "spawn_prob": 0.25, "cluster_fill_prob": 0.2},
     "COAL": {"cluster": 2, "spawn_prob": 0.20, "cluster_fill_prob": 0.2},
 }
-
-MINERALS = {
-    "COAL": {},
-    "COPPER": {},
-    "IRON": {},
-}
-# MINERALS es para productos procesados/transportados en cintas
 
 MACHINES = {
     "DRILL": {}, "ASSEMBLER": {}, 
