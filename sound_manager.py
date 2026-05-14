@@ -80,8 +80,26 @@ class SoundManager:
         if not self.enabled or not self.sounds:
             return False
         
+        # Normalizar el nombre de la máquina para buscar el sonido correcto.
+        # Ejemplo: `INVENTORY` (cofre) usa el asset `chest_place.wav`.
+        machine_prefix = None
+        try:
+            if isinstance(machine_type, str):
+                mt_up = machine_type.upper()
+                if mt_up in ("INVENTORY", "COFRE", "CHEST"):
+                    machine_prefix = "chest"
+                else:
+                    machine_prefix = machine_type.lower()
+            elif isinstance(machine_type, dict):
+                # intentar extraer asset_key o nombre
+                machine_prefix = (machine_type.get("asset_key") or machine_type.get("machine") or str(machine_type)).lower()
+            else:
+                machine_prefix = str(machine_type).lower()
+        except Exception:
+            machine_prefix = str(machine_type).lower()
+
         # Construir nombre del sonido
-        sound_name = f"{machine_type.lower()}_{event_type}"
+        sound_name = f"{machine_prefix}_{event_type}"
         
         # Si el sonido específico no existe, intentar fallback genérico
         if sound_name not in self.sounds:

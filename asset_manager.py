@@ -1,5 +1,6 @@
 import os
 import sys
+import platform
 
 import pygame
 from pathlib import Path
@@ -24,9 +25,15 @@ def resource_path(relative_path: str) -> str:
 def default_save_root() -> Path:
     """Devuelve la carpeta de guardados por defecto."""
     if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
-        if os.name == "nt":
+        # Prefer platform-specific standard locations when running a frozen bundle
+        system = platform.system()
+        if os.name == "nt" or system == "Windows":
             base_dir = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        elif system == "Darwin":
+            # macOS: use ~/Library/Application Support by default
+            base_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / "Library" / "Application Support"))
         else:
+            # Linux and other unices: follow XDG spec or fallback to ~/.local/share
             base_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
         return base_dir / "TheDevHub" / "saves"
 
@@ -99,13 +106,15 @@ def _init_base_images():
                 _register_asset(asset_key, None, fallback_color)
 
     # Alias útiles: permitir referirse al cofre como 'INVENTORY' o 'COFRE'
-    # si existe el asset 'CONVEYOR_COFRE' dentro de assets/MACHINES/CONVEYOR
+    # usando cualquiera de los nombres históricos del asset.
     try:
-        if "CONVEYOR_COFRE" in _base_images and _base_images.get("CONVEYOR_COFRE") is not None:
-            _base_images.setdefault("INVENTORY", _base_images.get("CONVEYOR_COFRE"))
-            _fallbacks.setdefault("INVENTORY", _fallbacks.get("CONVEYOR_COFRE", (100, 100, 100)))
-            _base_images.setdefault("COFRE", _base_images.get("CONVEYOR_COFRE"))
-            _fallbacks.setdefault("COFRE", _fallbacks.get("CONVEYOR_COFRE", (100, 100, 100)))
+        for chest_key in ("CONVEYOR_COFRE", "CHEST_CHEST", "CHEST"):
+            if chest_key in _base_images and _base_images.get(chest_key) is not None:
+                _base_images.setdefault("INVENTORY", _base_images.get(chest_key))
+                _fallbacks.setdefault("INVENTORY", _fallbacks.get(chest_key, (100, 100, 100)))
+                _base_images.setdefault("COFRE", _base_images.get(chest_key))
+                _fallbacks.setdefault("COFRE", _fallbacks.get(chest_key, (100, 100, 100)))
+                break
     except Exception:
         pass
 

@@ -2,6 +2,8 @@ import json
 import random
 from datetime import datetime
 from pathlib import Path
+import os
+import tempfile
 
 from enums import Direction
 from asset_manager import default_save_root
@@ -12,8 +14,13 @@ from settings import CHUNK_SIZE, VIEW_CHUNK_MARGIN, BASE_SEED, CHUNK_CACHE_RADIU
 
 
 class MapManager:
-    def __init__(self, base_seed=None, chunk_size=CHUNK_SIZE, margin=VIEW_CHUNK_MARGIN, save_root=None, save_name="default"):
-        self.base_seed = base_seed if base_seed is not None else BASE_SEED
+    def __init__(self, base_seed=None, chunk_size=CHUNK_SIZE, margin=VIEW_CHUNK_MARGIN, save_root=None, save_name="partida1"):
+        if base_seed is not None:
+            self.base_seed = base_seed
+        elif BASE_SEED is not None:
+            self.base_seed = BASE_SEED
+        else:
+            self.base_seed = self._generate_world_seed()
         self.chunk_size = chunk_size
         self.margin = margin
         self.cache_radius = CHUNK_CACHE_RADIUS
@@ -31,7 +38,9 @@ class MapManager:
         self.save_meta = {}
         self.player_position = [0, 0]
         self.persistence_enabled = False
-        self._seed_captured = False
+
+    def _generate_world_seed(self):
+        return int(random.randint(0, 2**31 - 1))
 
     def _ensure_save_dirs(self):
         self.chunks_path.mkdir(parents=True, exist_ok=True)
@@ -85,20 +94,30 @@ class MapManager:
         buildings = []
         base_x = cx * self.chunk_size
         base_y = cy * self.chunk_size
-
         # El terreno y el mineral base se regeneran de forma determinista desde la semilla.
         # Persistimos solo los cambios que el jugador introduce sobre el mapa.
-        for (abs_x, abs_y), tile in tiles.items():
-            machine_data = self._normalize_machine_data(tile.get("machine"))
+        # Considerar tanto los tiles cargados como cualquier override que exista
+        # en `self.machine_overrides` para este chunk.
+        coords_to_check = set(tiles.keys())
+        for (mx, my) in self.machine_overrides.keys():
+            if base_x <= mx < base_x + self.chunk_size and base_y <= my < base_y + self.chunk_size:
+                coords_to_check.add((mx, my))
+
+        for (abs_x, abs_y) in coords_to_check:
+            # Priorizar machine_overrides cuando exista
+            if (abs_x, abs_y) in self.machine_overrides:
+                machine_data = self.machine_overrides.get((abs_x, abs_y))
+            else:
+                tile = tiles.get((abs_x, abs_y))
+                machine_data = tile.get("machine") if tile is not None else None
+
+            machine_data = self._normalize_machine_data(machine_data)
             if machine_data is not None:
                 building = dict(machine_data)
                 building["tile"] = self._tile_key(abs_x - base_x, abs_y - base_y)
                 buildings.append(building)
 
-        return {
-            "coords": [cx, cy],
-            "buildings": buildings,
-        }
+        return {"coords": [cx, cy], "seed": self.base_seed, "buildings": buildings}
 
     def _chunk_tiles_from_payload(self, payload):
         coords = payload.get("coords", [0, 0])
@@ -106,7 +125,8 @@ class MapManager:
         base_x = cx * self.chunk_size
         base_y = cy * self.chunk_size
 
-        tiles, _ = generate_chunk(cx, cy, seed=self.base_seed, chunk_size=self.chunk_size)
+        chunk_seed = payload.get("seed", self.base_seed)
+        tiles, _ = generate_chunk(cx, cy, seed=chunk_seed, chunk_size=self.chunk_size)
 
         # Compatibilidad con saves antiguos que todavía incluyan la capa `tiles`.
         for tile_key, tile_data in payload.get("tiles", {}).items():
@@ -152,10 +172,38 @@ class MapManager:
             "player_position": list(self.player_position),
         }
 
+    def _atomic_write_json(self, target_path: Path, data) -> None:
+        """Escribe JSON de forma atómica en el mismo directorio.
+
+        Crea un fichero temporal en el mismo directorio y luego lo
+        reemplaza con `os.replace` para minimizar archivos corruptos
+        por cierres inesperados (funciona en Windows/macOS/Linux).
+        """
+        target_dir = target_path.parent
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        fd, tmp_path = tempfile.mkstemp(prefix=target_path.name + '.', suffix='.tmp', dir=str(target_dir))
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                json.dump(data, handle, indent=4, ensure_ascii=False, sort_keys=True)
+                handle.flush()
+                try:
+                    os.fsync(handle.fileno())
+                except Exception:
+                    # fsync may fail on some platforms/filesystems; ignore
+                    pass
+            os.replace(tmp_path, str(target_path))
+        except Exception:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            raise
+
     def _write_meta(self):
         self._ensure_save_dirs()
-        with self.meta_path.open("w", encoding="utf-8") as handle:
-            json.dump(self.save_meta, handle, indent=4, ensure_ascii=False, sort_keys=True)
+        # Use atomic write to avoid partial/corrupt meta files on crash
+        self._atomic_write_json(self.meta_path, self.save_meta)
 
     def _cleanup_empty_chunks(self):
         """Limpia solo las carpetas de chunks vacíos (sin data.json), pero mantiene meta.json"""
@@ -188,30 +236,48 @@ class MapManager:
     def _save_chunk(self, cx, cy):
         tiles = self.chunks.get((cx, cy))
         if tiles is None:
-            # Si el chunk no está en memoria, intentar cargarlo del disco
+            # Cargar/generar el chunk en memoria para que se reapliquen overrides
+            try:
+                self._ensure_chunk(cx, cy)
+                tiles = self.chunks.get((cx, cy))
+            except Exception:
+                tiles = None
+
+            # Si aún no está en memoria, intentar cargar desde disco
+            if tiles is None:
+                chunk_file = self._chunk_file(cx, cy)
+                if chunk_file.exists():
+                    try:
+                        with chunk_file.open("r", encoding="utf-8") as handle:
+                            payload = json.load(handle)
+                        coords, tiles = self._chunk_tiles_from_payload(payload)
+                        self.chunks[coords] = tiles
+                    except Exception:
+                        return False
+                else:
+                    return False
+
+        payload = self._chunk_payload_from_tiles(cx, cy, tiles)
+
+        # No guardar chunks sin máquinas; si existe un archivo previo, eliminarlo
+        if not payload.get("buildings"):
             chunk_file = self._chunk_file(cx, cy)
             if chunk_file.exists():
                 try:
-                    with chunk_file.open("r", encoding="utf-8") as handle:
-                        payload = json.load(handle)
-                    coords, tiles = self._chunk_tiles_from_payload(payload)
-                    self.chunks[coords] = tiles
+                    chunk_file.unlink()
                 except Exception:
-                    return False
-            else:
-                return False
-
-        payload = self._chunk_payload_from_tiles(cx, cy, tiles)
-        
-        # No guardar chunks sin máquinas
-        if not payload.get("buildings"):
+                    pass
+                try:
+                    self._chunk_dir(cx, cy).rmdir()
+                except Exception:
+                    pass
             return False
 
         self._ensure_save_dirs()
         chunk_dir = self._chunk_dir(cx, cy)
         chunk_dir.mkdir(parents=True, exist_ok=True)
-        with self._chunk_file(cx, cy).open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=4, ensure_ascii=False, sort_keys=True)
+        # Atomic write for chunk data as well
+        self._atomic_write_json(self._chunk_file(cx, cy), payload)
         return True
 
     def _has_persistable_content(self):
@@ -224,7 +290,12 @@ class MapManager:
         if player_position is not None:
             self.player_position = [int(player_position[0]), int(player_position[1])]
 
-        # Siempre guardar meta.json para preservar la semilla y posición del jugador
+        # Si no hay contenido persistible (p. ej. ninguna máquina), no crear ni escribir saves.
+        # Esto evita crear la carpeta de la partida ni el meta.json hasta que haya algo que guardar.
+        if not self._has_persistable_content():
+            return False
+
+        # Guardar meta.json para preservar la semilla y posición del jugador
         if not self.save_meta:
             self.save_meta = self._default_meta()
         else:
@@ -290,7 +361,9 @@ class MapManager:
             self.persistence_enabled = False
             return self.save_meta
 
-        self.base_seed = self.save_meta.get("seed", self.base_seed)
+        loaded_seed = self.save_meta.get("seed")
+        if loaded_seed is not None:
+            self.base_seed = loaded_seed
         self.player_position = list(self.save_meta.get("player_position", self.player_position))
 
         if self.chunks_path.exists():
@@ -310,11 +383,6 @@ class MapManager:
         if (cx, cy) in self.chunks:
             return
         tiles, derived_seed = generate_chunk(cx, cy, seed=self.base_seed, chunk_size=self.chunk_size)
-        
-        # Importar la semilla generada en el primer chunk
-        if not self._seed_captured:
-            self.base_seed = derived_seed
-            self._seed_captured = True
 
         # Reaplicar máquinas construidas previamente al volver a generar un chunk.
         chunk_min_x = cx * self.chunk_size
@@ -368,6 +436,19 @@ class MapManager:
         merged = {}
         for tiles in self.chunks.values():
             merged.update(tiles)
+
+        # Aplicar machine_overrides como overlay: asegurarse de que cualquier
+        # override (incluso si el chunk no está cargado) sea visible en el merge
+        for (mx, my), machine in self.machine_overrides.items():
+            if (mx, my) in merged:
+                try:
+                    merged[(mx, my)]["machine"] = machine
+                except Exception:
+                    merged[(mx, my)] = {"machine": machine}
+            else:
+                # Insertar un tile mínimo para representar el override
+                merged[(mx, my)] = {"machine": machine}
+
         return merged
 
     def get_tiles_in_rect(self, tile_x0, tile_y0, tile_x1, tile_y1):
@@ -431,7 +512,111 @@ class MapManager:
         final_machine_data = machine_data if machine_data is not None else machine_name
         tile["machine"] = final_machine_data
         self.machine_overrides[(x, y)] = final_machine_data
+
+        # Persistir automáticamente la colocación para que la interfaz y tests
+        # encuentren los archivos de save inmediatamente después de colocar.
+        try:
+            self.saveMapToJSON()
+        except Exception:
+            # No propagar errores de persistencia a la lógica de colocación
+            pass
+
+        # Reproducir sonido de colocación si el mixer está inicializado (evitar fallos en tests)
+        try:
+            import pygame
+            if getattr(pygame, "mixer", None) is not None and pygame.mixer.get_init():
+                try:
+                    from sound_manager import play_place_sound
+                    mname = final_machine_data if isinstance(final_machine_data, str) else final_machine_data.get("machine")
+                    if mname:
+                        try:
+                            play_place_sound(mname)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         return True
+
+    def restore_structures(self, conveyor_system, drill_system):
+        """Reconstruye estructuras en los sistemas provistos a partir del estado guardado.
+
+        Añade cintas y taladros encontrados en los tiles cargados.
+        """
+        # Importar localmente para evitar posibles dependencias circulares
+        from build_system import MACHINE_CONVEYOR, MACHINE_DRILL, MACHINE_INVENTORY
+        from logic.conveyor import ConveyorBelt, ConveyorCurve
+
+        merged = self.get_merged_tiles()
+        for (x, y), tile in merged.items():
+            md = tile.get("machine")
+            if md is None:
+                continue
+
+            # Normalizar a dict si es necesario
+            if not isinstance(md, dict):
+                machine_name = md
+                md = {"machine": md}
+            else:
+                machine_name = md.get("machine")
+
+            try:
+                if machine_name == MACHINE_CONVEYOR:
+                    dir_name = md.get("direction")
+                    in_dir_name = md.get("in_direction")
+                    dir_val = None
+                    in_dir_val = None
+                    try:
+                        if dir_name:
+                            dir_val = Direction[dir_name]
+                    except Exception:
+                        dir_val = None
+                    try:
+                        if in_dir_name:
+                            in_dir_val = Direction[in_dir_name]
+                    except Exception:
+                        in_dir_val = None
+
+                    if dir_val is None:
+                        dir_val = Direction.RIGHT
+
+                    if in_dir_val is not None and in_dir_val != dir_val:
+                        belt = ConveyorCurve(x, y, dir_val, in_dir_val)
+                    else:
+                        belt = ConveyorBelt(x, y, dir_val, incoming_direction=in_dir_val)
+
+                    try:
+                        conveyor_system.add_belt(belt)
+                    except Exception:
+                        pass
+
+                elif machine_name == MACHINE_DRILL:
+                    dir_name = md.get("direction")
+                    mineral = md.get("mineral") or md.get("material")
+                    dir_val = None
+                    try:
+                        if dir_name:
+                            dir_val = Direction[dir_name]
+                    except Exception:
+                        dir_val = None
+
+                    if dir_val is None:
+                        dir_val = Direction.RIGHT
+
+                    try:
+                        drill = drill_system.create_drill(x, y, dir_val, mineral)
+                        drill_system.add_drill(drill)
+                    except Exception:
+                        pass
+
+                elif machine_name == MACHINE_INVENTORY:
+                    # Inventarios se gestionan por el sistema de inventarios externo; ignorar aquí
+                    pass
+            except Exception:
+                # Seguir procesando otros tiles aunque uno falle
+                continue
 
     def clear_machine(self, x, y):
         """Elimina la máquina del tile si existe."""
@@ -440,6 +625,24 @@ class MapManager:
             tile["machine"] = None
 
         if (x, y) in self.machine_overrides:
+            # Reproducir sonido de eliminación si el mixer está inicializado
+            try:
+                md = self.machine_overrides.get((x, y))
+                import pygame
+                if getattr(pygame, "mixer", None) is not None and pygame.mixer.get_init():
+                    try:
+                        from sound_manager import play_delete_sound
+                        mname = md if isinstance(md, str) else (md.get("machine") if isinstance(md, dict) else None)
+                        if mname:
+                            try:
+                                play_delete_sound(mname)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
             del self.machine_overrides[(x, y)]
 
     def is_machine_occupied(self, x, y):

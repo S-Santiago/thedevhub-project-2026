@@ -56,13 +56,20 @@ def screen_to_tile(mouse_pos, offset_x, offset_y, tile_size):
 
 def _place_conveyor(map_manager, conveyor_system, tile_x, tile_y, selected_direction, selected_in_direction=None):
     if conveyor_system is None:
-        return False
+        return False, "sistema de cintas no inicializado"
 
     if conveyor_system.get_belt(tile_x, tile_y) is not None:
-        return False
+        return False, "ya hay una cinta en ese tile"
 
     if not map_manager.place_machine(tile_x, tile_y, MACHINE_CONVEYOR):
-        return False
+        tile = map_manager.get_tile(tile_x, tile_y, ensure_chunk=True)
+        if tile is None:
+            return False, "chunk o tile no disponible"
+        if not tile.get("canPlace"):
+            return False, "ese terreno no permite construcción"
+        if tile.get("machine") is not None:
+            return False, "ya hay una máquina colocada"
+        return False, "no se pudo colocar la cinta"
 
     # Determinar entrada (incoming): si se especifica `selected_in_direction` usarla,
     # en caso contrario detectar una cinta vecina que apunte a esta casilla.
@@ -81,6 +88,10 @@ def _place_conveyor(map_manager, conveyor_system, tile_x, tile_y, selected_direc
     # Persistir metadatos de dirección en map_manager.machine_overrides para mantener la rotación
     try:
         map_manager.machine_overrides[(tile_x, tile_y)] = {"machine": MACHINE_CONVEYOR, "direction": getattr(selected_direction, "name", str(selected_direction)), "in_direction": getattr(incoming, "name", None) if incoming else None}
+        try:
+            map_manager.saveMapToJSON()
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -93,50 +104,74 @@ def _place_conveyor(map_manager, conveyor_system, tile_x, tile_y, selected_direc
     except Exception:
         # Fallback sencillo
         conveyor_system.add_belt(ConveyorBelt(tile_x, tile_y, selected_direction, incoming_direction=incoming))
-    return True
+    return True, None
 
 
 def _place_drill(map_manager, drill_system, tile_x, tile_y, selected_direction):
     if drill_system is None:
-        return False
+        return False, "sistema de perforación no inicializado"
 
     if drill_system.get_drill(tile_x, tile_y) is not None:
-        return False
+        return False, "ya hay un taladro en ese tile"
 
     tile = map_manager.get_tile(tile_x, tile_y, ensure_chunk=True)
     if tile is None:
-        return False
+        return False, "chunk o tile no disponible"
 
     mineral_kind = tile.get("mineral")
     if not mineral_kind:
-        return False
+        return False, "ese tile no tiene mineral"
 
-    if not map_manager.place_machine(tile_x, tile_y, MACHINE_DRILL):
-        return False
+    drill_data = {
+        "machine": MACHINE_DRILL,
+        "direction": getattr(selected_direction, "name", str(selected_direction)),
+        "mineral": mineral_kind,
+    }
+
+    if not map_manager.place_machine(tile_x, tile_y, MACHINE_DRILL, machine_data=drill_data):
+        if not tile.get("canPlace"):
+            return False, "ese terreno no permite construcción"
+        if tile.get("machine") is not None:
+            return False, "ya hay una máquina colocada"
+        return False, "no se pudo colocar el taladro"
+
+    try:
+        map_manager.machine_overrides[(tile_x, tile_y)] = drill_data
+        map_manager.saveMapToJSON()
+    except Exception:
+        pass
 
     drill = drill_system.create_drill(tile_x, tile_y, selected_direction, mineral_kind)
     drill_system.add_drill(drill)
-    return True
+    return True, None
 
 
 def _place_inventory(map_manager, inventory_system, tile_x, tile_y):
     """Coloca un inventario (cofre) en la celda y registra la máquina en el InventorySystem."""
     if inventory_system is None:
-        return False
+        return False, "sistema de inventarios no inicializado"
 
     if inventory_system.get_inventory(tile_x, tile_y) is not None:
-        return False
+        return False, "ya hay un cofre en ese tile"
 
     tile = map_manager.get_tile(tile_x, tile_y, ensure_chunk=True)
     if tile is None:
-        return False
+        return False, "chunk o tile no disponible"
 
     if not map_manager.place_machine(tile_x, tile_y, MACHINE_INVENTORY):
-        return False
+        if not tile.get("canPlace"):
+            return False, "ese terreno no permite construcción"
+        if tile.get("machine") is not None:
+            return False, "ya hay una máquina colocada"
+        return False, "no se pudo colocar el cofre"
 
-    # Persistir metadatos: asignar asset del cofre existente en los assets de CONVEYOR (Cofre.png)
+    # Persistir metadatos: usar el asset real del cofre en assets/MACHINES/CHEST/CHEST.png.
     try:
-        map_manager.machine_overrides[(tile_x, tile_y)] = {"machine": MACHINE_INVENTORY, "asset_key": "CONVEYOR_COFRE"}
+        map_manager.machine_overrides[(tile_x, tile_y)] = {"machine": MACHINE_INVENTORY, "asset_key": "CHEST_CHEST"}
+        try:
+            map_manager.saveMapToJSON()
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -146,7 +181,7 @@ def _place_inventory(map_manager, inventory_system, tile_x, tile_y):
     except Exception:
         pass
 
-    return True
+    return True, None
 
 
 def place_selected_machine(
@@ -164,6 +199,46 @@ def place_selected_machine(
 
     Devuelve True si la colocación tuvo éxito, False en caso contrario.
     """
+    if selected_machine == MACHINE_CONVEYOR:
+        ok, reason = _place_conveyor(
+            map_manager,
+            conveyor_system,
+            tile_x,
+            tile_y,
+            selected_direction,
+            selected_in_direction=selected_in_direction,
+        )
+        return ok
+
+    if selected_machine == MACHINE_DRILL:
+        ok, reason = _place_drill(
+            map_manager,
+            drill_system,
+            tile_x,
+            tile_y,
+            selected_direction,
+        )
+        return ok
+
+    if selected_machine == MACHINE_INVENTORY:
+        ok, reason = _place_inventory(map_manager, inventory_system, tile_x, tile_y)
+        return ok
+
+    return False
+
+
+def place_selected_machine_with_reason(
+    map_manager,
+    conveyor_system,
+    tile_x,
+    tile_y,
+    selected_machine,
+    selected_direction,
+    drill_system=None,
+    selected_in_direction=None,
+    inventory_system=None,
+):
+    """Como `place_selected_machine`, pero devuelve (ok, reason)."""
     if selected_machine == MACHINE_CONVEYOR:
         return _place_conveyor(
             map_manager,
@@ -186,4 +261,4 @@ def place_selected_machine(
     if selected_machine == MACHINE_INVENTORY:
         return _place_inventory(map_manager, inventory_system, tile_x, tile_y)
 
-    return False
+    return False, f"máquina no soportada: {selected_machine}"
