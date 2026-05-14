@@ -11,7 +11,7 @@ from pathlib import Path
 def _show_save_slot_dialog():
     """Show save slot dialog using pygame. Returns None if user closes the dialog."""
     SAVE_SLOTS = ["partida1", "partida2", "partida3"]
-    save_root = Path(__file__).resolve().parent / "saves"
+    save_root = default_save_root()
     
     # Initialize pygame for dialog
     pygame.init()
@@ -245,7 +245,7 @@ from settings import (
 
 from build_system import MACHINE_CONVEYOR
 from map_manager import MapManager
-from asset_manager import load_images, resource_path
+from asset_manager import default_save_root, load_images, resource_path
 from renderer import render_frame
 from input_handler import process_event
 from logic.conveyor import ConveyorSystem
@@ -277,7 +277,7 @@ def run():
             print(f"No se pudo establecer App ID de Windows: {e}")
 
     # Elegir slot antes de inicializar la ventana principal del juego.
-    save_root = Path(__file__).resolve().parent / "saves"
+    save_root = default_save_root()
     selected_save_name = _choose_save_name(save_root)
     
     # Si el usuario cierra el diálogo de selección, salir de la aplicación
@@ -345,7 +345,6 @@ def run():
     # Centrar la cámara en la posición guardada (player_position almacena la tile central)
     try:
         px, py = map_manager.player_position
-        px = int(px)
         py = int(py)
         offset_x = - (px * tile_size) + (window_width / 2)
         offset_y = - (py * tile_size) + (window_height / 2)

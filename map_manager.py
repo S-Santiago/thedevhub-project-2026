@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from enums import Direction
+from asset_manager import default_save_root
 from logic.conveyor import ConveyorBelt, ConveyorCurve
 from logic.drill_system import DrillMachine
 from map_generator import generate_chunk
@@ -39,7 +40,7 @@ class MapManager:
         self.chunk_size = chunk_size
         self.margin = margin
         self.cache_radius = CHUNK_CACHE_RADIUS
-        self.save_root = Path(save_root) if save_root is not None else Path(__file__).resolve().parent / "saves"
+        self.save_root = Path(save_root) if save_root is not None else default_save_root()
         self.save_name = save_name
         self.save_path = self.save_root / self.save_name
         self.chunks_path = self.save_path / "chunks"
@@ -172,7 +173,7 @@ class MapManager:
     def _write_meta(self):
         self._ensure_save_dirs()
         with self.meta_path.open("w", encoding="utf-8") as handle:
-            json.dump(self.save_meta, handle, indent=2, ensure_ascii=False, sort_keys=True)
+            json.dump(self.save_meta, handle, indent=4, ensure_ascii=False, sort_keys=True)
 
     def _cleanup_empty_chunks(self):
         """Limpia solo las carpetas de chunks vacíos (sin data.json), pero mantiene meta.json"""
@@ -228,7 +229,7 @@ class MapManager:
         chunk_dir = self._chunk_dir(cx, cy)
         chunk_dir.mkdir(parents=True, exist_ok=True)
         with self._chunk_file(cx, cy).open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, ensure_ascii=False, sort_keys=True)
+            json.dump(payload, handle, indent=4, ensure_ascii=False, sort_keys=True)
         return True
 
     def _has_persistable_content(self):

@@ -15,8 +15,22 @@ _scaled_cache: Dict[Tuple[str, int], pygame.Surface] = {}
 def resource_path(relative_path):
     """Obtiene la ruta absoluta al recurso, funciona en entorno de desarrollo y en PyInstaller"""
     if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.abspath("."), relative_path)
+        base_path = Path(sys._MEIPASS)
+    else:
+        base_path = Path(__file__).resolve().parent
+    return str(base_path / relative_path)
+
+
+def default_save_root():
+    """Devuelve la carpeta de guardados por defecto."""
+    if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
+        if os.name == "nt":
+            base_dir = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        else:
+            base_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+        return base_dir / "TheDevHub" / "saves"
+
+    return Path(__file__).resolve().parent / "saves"
 
 
 def _fallback_color(category_name: str) -> Tuple[int, int, int]:
