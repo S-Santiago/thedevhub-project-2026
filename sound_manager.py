@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 import pygame
 
+from asset_manager import resource_path
+
 # Tipos de eventos de sonido
 EVENT_MACHINE_PLACED = "machine_placed"
 EVENT_MACHINE_DELETED = "machine_deleted"
@@ -26,7 +28,11 @@ class SoundManager:
         Args:
             assets_dir: Directorio base de assets (por defecto "assets")
         """
-        self.sounds_dir = Path(assets_dir) / "SOUNDS"
+        assets_path = Path(assets_dir)
+        if not assets_path.is_absolute():
+            assets_path = Path(resource_path(str(assets_path)))
+
+        self.sounds_dir = assets_path / "SOUNDS"
         self.sounds = {}
         self.enabled = True
         self.master_volume = 1.0

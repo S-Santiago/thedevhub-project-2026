@@ -18,7 +18,7 @@ py -m pip install -r requirements.txt
 Ejecuta este comando:
 
 ```bash
-py -m PyInstaller --noconfirm --clean --windowed --name "TheDevHub" --add-data "assets;assets" app.pyw
+py -m PyInstaller --noconfirm --clean --windowed --name "TheDevHub" --workpath "%LOCALAPPDATA%\TheDevHub\pyinstaller-build" --add-data "assets;assets" app.pyw
 ```
 
 ## 4) Dónde queda el ejecutable
@@ -33,7 +33,7 @@ Para que el juego funcione correctamente, comparte **toda** la carpeta `TheDevHu
 Si prefieres un solo archivo:
 
 ```bash
-py -m PyInstaller --noconfirm --clean --onefile --windowed --name "TheDevHub" --icon="assets/icon.ico" --add-data "assets;assets" --collect-binaries numpy --hidden-import numpy --hidden-import numpy._core._multiarray_umath app.pyw
+py -m PyInstaller --noconfirm --clean --onefile --windowed --name "TheDevHub" --workpath "%LOCALAPPDATA%\TheDevHub\pyinstaller-build" --icon="assets/icon.ico" --add-data "assets;assets" --collect-binaries numpy --hidden-import numpy --hidden-import numpy._core._multiarray_umath app.pyw
 ```
 
 Resultado esperado:
@@ -58,9 +58,12 @@ Verifica que existe la carpeta `assets` en la raíz del proyecto y que usas exac
 --add-data "assets;assets"
 ```
 
+### PermissionError en `build\TheDevHub\localpycs`
+Esto suele pasar si el proyecto está dentro de OneDrive, el EXE está abierto, o Windows Defender/antivirus bloquea la carpeta de trabajo. Usa un `--workpath` fuera del proyecto, como en los comandos anteriores, y vuelve a compilar tras cerrar cualquier `TheDevHub.exe` abierto.
+
 ### El ejecutable se abre y se cierra
 Prueba quitando `--windowed` temporalmente para ver errores en consola:
 
 ```bash
-py -m PyInstaller --noconfirm --clean --name "TheDevHub" --add-data "assets;assets" app.pyw
+py -m PyInstaller --noconfirm --clean --name "TheDevHub" --workpath "%LOCALAPPDATA%\TheDevHub\pyinstaller-build" --add-data "assets;assets" app.pyw
 ```
