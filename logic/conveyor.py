@@ -1,4 +1,5 @@
 from typing import Optional      # permite indicar que un valor puede ser de un tipo o None
+from logic.inventory import MACHINE_INVENTORY
 from enums import Direction
 
 
@@ -194,7 +195,7 @@ class ConveyorSystem:
             return True                         # exito
         return False  # la celda no existe o ya tiene un material
 
-    def update(self, delta_time: float) -> None:
+    def update(self, delta_time: float, map_manager=None, inventory_system=None) -> None:
         """Actualizar sistema de cintas en dos fases:
 
         1) Calcular el progreso proyectado de cada material y registrar intenciones
@@ -216,6 +217,8 @@ class ConveyorSystem:
         # Paso 2: construir intenciones (dst_pos -> (src_pos, item)) respetando
         # que el destino sea válido (exista) y vaya a quedar libre o ya esté libre.
         intents = {}
+        # Para depósitos a máquinas (p.ej. cofres) que no son cintas
+        deposit_intents = {}
         for belt in list(self._grid.values()):
             src = (belt.x, belt.y)
             if belt.item is None:
@@ -232,8 +235,34 @@ class ConveyorSystem:
             dst = (belt.x + dx, belt.y + dy)
             dest_belt = self.get_belt(dst[0], dst[1])
 
-            # Destino inexistente: el material queda en el borde
+            # Si no hay una cinta destino, quizá hay una máquina (p.ej. un cofre)
             if dest_belt is None:
+                machine_name = None
+                try:
+                    if map_manager is not None:
+                        md = map_manager.get_machine_data(dst[0], dst[1])
+                        if isinstance(md, dict):
+                            machine_name = md.get("machine")
+                        else:
+                            machine_name = md
+                except Exception:
+                    machine_name = None
+
+                # Soportar depósito en INVENTORY
+                if machine_name == MACHINE_INVENTORY or machine_name == "INVENTORY":
+                    # Conflicto de depósitos: si ya hay intención la cancelamos
+                    if dst in deposit_intents:
+                        prev_src, prev_item = deposit_intents.pop(dst)
+                        s = self.get_belt(prev_src[0], prev_src[1])
+                        if s and s.item:
+                            s.item.progress = 1.0
+                        belt.item.progress = 1.0
+                        continue
+
+                    deposit_intents[dst] = (src, belt.item)
+                    continue
+
+                # Destino inexistente y no es máquina receptora: queda en la frontera
                 belt.item.progress = 1.0
                 continue
 
@@ -272,6 +301,15 @@ class ConveyorSystem:
                 belt.item.progress = 1.0
                 continue
 
+            # Si ya existe una intención de depósito hacia la misma posición, cancelar también
+            if dst in deposit_intents:
+                prev_src, prev_item = deposit_intents.pop(dst)
+                s = self.get_belt(prev_src[0], prev_src[1])
+                if s and s.item:
+                    s.item.progress = 1.0
+                belt.item.progress = 1.0
+                continue
+
             intents[dst] = (src, belt.item)
 
         # Paso 3: aplicar transferencias válidas
@@ -286,6 +324,27 @@ class ConveyorSystem:
             dst_belt.item = item
             dst_belt.is_empty = False
             dst_belt.item.progress = 0.0
+
+        # Aplicar depósitos a máquinas (p.ej. cofres)
+        for dst_pos, (src_pos, item) in deposit_intents.items():
+            src_belt = self.get_belt(src_pos[0], src_pos[1])
+            if src_belt is None or item is None:
+                continue
+
+            stored = False
+            try:
+                if inventory_system is not None:
+                    stored = inventory_system.store_item_at(dst_pos[0], dst_pos[1], item.kind, 1)
+            except Exception:
+                stored = False
+
+            if stored:
+                # consumir el item de la cinta origen
+                src_belt.item = None
+                src_belt.is_empty = True
+            else:
+                # no se pudo almacenar: dejar en frontera
+                src_belt.item.progress = 1.0
 
     def _compute_incoming(self, x: int, y: int):
         """Busca una cinta adyacente que apunte a (x,y) y devuelve su Direction si existe."""
