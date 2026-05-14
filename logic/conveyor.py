@@ -38,6 +38,8 @@ class ConveyorBelt:
     def __init__(self, x: int, y: int, direction, speed: float = 1.0, incoming_direction: Optional[Direction] = None) -> None:
         self.x         : int          = x          # columna en el grid
         self.y         : int          = y          # fila en el grid
+        if direction is None:
+            direction = Direction.RIGHT
         self.direction                = direction  # direccion a la que apunta (enum Direction) -> salida
         # incoming_direction: si otra cinta apunta a esta celda, la guardamos para poder dibujar curvas
         self.incoming_direction       = incoming_direction
@@ -92,6 +94,8 @@ class ConveyorBelt:
 
     def _try_transfer(self, system) -> None:
         # obtiene el desplazamiento de la direccion, ej: RIGHT dx=1 dy=0
+        if self.direction is None:
+            self.direction = Direction.RIGHT
         dx, dy = self.direction.value
 
         # busca la celda que hay en la direccion a la que apunta esta cinta
@@ -112,6 +116,9 @@ class ConveyorBelt:
         if self.item is None:
             return None
 
+        if self.direction is None:
+            self.direction = Direction.RIGHT
+
         dx, dy   = self.direction.value  # desplazamiento de la direccion
         progress = self.item.progress    # cuanto ha avanzado el material en esta celda (0.0 a 1.0)
 
@@ -123,9 +130,10 @@ class ConveyorBelt:
 
     def __repr__(self) -> str:
         in_dir = getattr(self.incoming_direction, "name", None)
+        dir_name = getattr(self.direction, "name", None)
         return (
             f"ConveyorBelt(pos=({self.x},{self.y}), "
-            f"dir={self.direction.name}, in={in_dir}, "
+            f"dir={dir_name}, in={in_dir}, "
             f"item={self.item})"
         )
 

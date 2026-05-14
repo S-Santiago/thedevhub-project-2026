@@ -3,7 +3,7 @@ from typing import Optional
 
 _debug_font: Optional[pygame.font.Font] = None
 import GUI
-from build_system import MACHINE_CONVEYOR, MACHINE_DRILL, MACHINE_INVENTORY
+from build_system import MACHINE_CONVEYOR, MACHINE_DRILL, MACHINE_INVENTORY, AVAILABLE_MACHINES
 from enums import Direction
 
 
@@ -55,6 +55,37 @@ def _select_conveyor_surface(images, incoming_direction, outgoing_direction):
     return None
 
 
+def _select_machine_surface(images, base_name: str, direction_name: str = None):
+    """Selecciona la mejor superficie para una máquina genérica.
+
+    Intentos: base_name_DIRECTION -> base_name_RIGHT -> base_name_EAST -> cualquier
+    variante base_name_* -> base_name
+    """
+    candidates = []
+    if direction_name:
+        candidates.append(f"{base_name}_{direction_name}")
+    candidates.extend([f"{base_name}_RIGHT", f"{base_name}_EAST"])  # preferir East/Right
+
+    for key in images.keys():
+        if key.startswith(f"{base_name}_"):
+            candidates.append(key)
+
+    candidates.append(base_name)
+
+    for key in candidates:
+        try:
+            img = images.get(key)
+            if img is not None:
+                try:
+                    return img.copy()
+                except Exception:
+                    return img
+        except Exception:
+            continue
+
+    return None
+
+
 def render_frame(
     screen,
     tiles,
@@ -66,6 +97,7 @@ def render_frame(
     conveyor_system=None,
     drill_system=None,
     context_menu=None,
+    selected_machine=None,
 ):
     screen.fill((0, 0, 0))  # Limpiar pantalla cada frame
 
@@ -80,6 +112,31 @@ def render_frame(
         mineral = data.get("mineral")
         if mineral and mineral in images and images[mineral] is not None:
             screen.blit(images[mineral], (pos_x, pos_y))
+
+    # Mostrar overlay de lugares construibles si se solicitó en debug
+    try:
+        if debug is not None and debug.get("show_placeable"):
+            for (x, y), data in tiles.items():
+                px = offset_x + (x * tile_size)
+                py = offset_y + (y * tile_size)
+                can_place = data.get("canPlace")
+                machine = data.get("machine")
+                if machine is not None:
+                    # ocupada -> semitransparente roja
+                    s = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
+                    s.fill((200, 0, 0, 120))
+                    screen.blit(s, (px, py))
+                else:
+                    if can_place is True:
+                        s = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
+                        s.fill((0, 200, 0, 70))
+                        screen.blit(s, (px, py))
+                    else:
+                        s = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
+                        s.fill((0, 0, 200, 70))
+                        screen.blit(s, (px, py))
+    except Exception:
+        pass
             
     # Dibujar las cintas transportadoras y los materiales en ellas
     if conveyor_system is not None:
@@ -119,11 +176,10 @@ def render_frame(
             pos_x = offset_x + (dx * tile_size)
             pos_y = offset_y + (dy * tile_size)
 
-            dir_key = f"DRILL_{drill.direction.name}"
-            if dir_key in images and images[dir_key] is not None:
-                screen.blit(images[dir_key], (pos_x, pos_y))
-            elif "DRILL" in images and images["DRILL"] is not None:
-                screen.blit(images["DRILL"], (pos_x, pos_y))
+            dir_name = getattr(drill.direction, "name", None) if drill.direction is not None else None
+            surf = _select_machine_surface(images, "DRILL", dir_name)
+            if surf is not None:
+                screen.blit(surf, (pos_x, pos_y))
             else:
                 pygame.draw.rect(screen, (220, 180, 40), (pos_x, pos_y, tile_size, tile_size), 2)
 
@@ -226,23 +282,12 @@ def render_frame(
                     # Taladro: asset por dirección o fallback
                     elif p_machine == MACHINE_DRILL or p_machine == "DRILL":
                         dir_name = getattr(p_dir, "name", None) if p_dir is not None else None
-                        dir_key = f"DRILL_{dir_name}" if dir_name else "DRILL"
-                        if dir_key in images and images[dir_key] is not None:
-                            surf = images[dir_key].copy()
-                            surf.set_alpha(160 if can_place else 100)
-                            if dir_letter:
-                                try:
-                                    font = pygame.font.SysFont(None, max(12, int(tile_size * 0.5)))
-                                    text_s = font.render(dir_letter, True, (255, 255, 255))
-                                    tx = (surf.get_width() - text_s.get_width()) // 2
-                                    ty = (surf.get_height() - text_s.get_height()) // 2
-                                    surf.blit(text_s, (tx, ty))
-                                except Exception:
-                                    pass
-                            screen.blit(surf, (px, py))
-                        elif "DRILL" in images and images["DRILL"] is not None:
-                            surf = images["DRILL"].copy()
-                            surf.set_alpha(160 if can_place else 100)
+                        surf = _select_machine_surface(images, "DRILL", dir_name)
+                        if surf is not None:
+                            try:
+                                surf.set_alpha(160 if can_place else 100)
+                            except Exception:
+                                pass
                             if dir_letter:
                                 try:
                                     font = pygame.font.SysFont(None, max(12, int(tile_size * 0.5)))
@@ -266,6 +311,71 @@ def render_frame(
                                     s.blit(text_s, (tx, ty))
                                 except Exception:
                                     pass
+                            screen.blit(s, (px, py))
+                    
+                    # Cofre / Inventario: intentar varias claves comunes
+                    elif p_machine == MACHINE_INVENTORY or p_machine == "INVENTORY":
+                        asset_key = preview.get("asset_key")
+                        surf = None
+                        candidates = []
+                        if asset_key:
+                            candidates.append(asset_key)
+                        candidates.extend(["INVENTORY", "CHEST_CHEST", "CHEST", "COFRE", "CONVEYOR_COFRE"])
+                        for key in candidates:
+                            try:
+                                img = images.get(key)
+                                if img is not None:
+                                    try:
+                                        surf = img.copy()
+                                    except Exception:
+                                        surf = img
+                                    break
+                            except Exception:
+                                continue
+
+                        if surf is not None:
+                            try:
+                                surf.set_alpha(160 if can_place else 100)
+                            except Exception:
+                                pass
+                            screen.blit(surf, (px, py))
+                        else:
+                            s = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
+                            color = (0, 200, 0, 90) if can_place else (200, 0, 0, 90)
+                            s.fill(color)
+                            screen.blit(s, (px, py))
+                    
+                    # Cofre / Inventario: usar asset explícito si existe o intentar claves comunes
+                    elif p_machine == MACHINE_INVENTORY or p_machine == "INVENTORY":
+                        asset_key = preview.get("asset_key")
+                        surf = None
+                        candidates = []
+                        if asset_key:
+                            candidates.append(asset_key)
+                        # Intentar claves comunes donde puede estar el asset del cofre
+                        candidates.extend(["INVENTORY", "CHEST_CHEST", "CHEST", "COFRE", "CONVEYOR_COFRE"])
+                        for key in candidates:
+                            try:
+                                img = images.get(key)
+                                if img is not None:
+                                    try:
+                                        surf = img.copy()
+                                    except Exception:
+                                        surf = img
+                                    break
+                            except Exception:
+                                continue
+
+                        if surf is not None:
+                            try:
+                                surf.set_alpha(160 if can_place else 100)
+                            except Exception:
+                                pass
+                            screen.blit(surf, (px, py))
+                        else:
+                            s = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
+                            color = (0, 200, 0, 90) if can_place else (200, 0, 0, 90)
+                            s.fill(color)
                             screen.blit(s, (px, py))
         except Exception as e:
             print("[ERROR] drawing preview:", e)
@@ -299,117 +409,27 @@ def render_frame(
         except Exception as e:
             print("[ERROR] render_frame debug overlay:", e)
 
-    # Dibujar previsualización de colocación (hover) si la hay en debug['preview']
-    if debug is not None:
+    # Alerta de construcción / guardado
+    if debug is not None and debug.get("alert"):
         try:
-            preview = debug.get("preview")
-            if preview:
-                p_tile = preview.get("tile")
-                p_machine = preview.get("machine")
-                p_dir = preview.get("direction")
-                can_place = preview.get("can_place", False)
-                if p_tile is not None and p_machine is not None:
-                    px = offset_x + (p_tile[0] * tile_size)
-                    py = offset_y + (p_tile[1] * tile_size)
+            font = pygame.font.SysFont(None, 20)
+            text = str(debug.get("alert"))
+            text_surf = font.render(text, True, (255, 255, 255))
+            pad_x, pad_y = 10, 8
+            box_w = text_surf.get_width() + pad_x * 2
+            box_h = text_surf.get_height() + pad_y * 2
+            box = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+            box.fill((160, 30, 30, 220))
+            box.blit(text_surf, (pad_x, pad_y))
+            screen.blit(box, (10, 40))
+        except Exception:
+            pass
 
-                    # Determinar letra cardinal para la dirección (N,E,S,W)
-                    dir_letter = None
-                    if p_dir is not None:
-                        dir_name = getattr(p_dir, "name", None) if p_dir is not None else None
-                        if dir_name is None:
-                            dir_name = str(p_dir)
-                        letter_map = {"UP": "N", "RIGHT": "E", "DOWN": "S", "LEFT": "W"}
-                        dir_letter = letter_map.get(dir_name, None)
-
-                    # Cinta: usar la misma selección de asset que el render normal
-                    if p_machine == MACHINE_CONVEYOR or p_machine == "CONVEYOR":
-                        p_in = preview.get("in_direction")
-                        chosen = None
-                        try:
-                            chosen = _select_conveyor_surface(images, p_in, p_dir)
-                        except Exception:
-                            chosen = None
-
-                        if chosen is not None:
-                            surf = chosen
-                            surf.set_alpha(160 if can_place else 100)
-
-                            # Dibujar texto encima: si hay in_direction mostrar "N→E",
-                            # si no, mostrar la letra de salida.
-                            try:
-                                font = pygame.font.SysFont(None, max(10, int(tile_size * 0.35)))
-                                in_letter = _direction_letter(p_in)
-                                out_letter = _direction_letter(p_dir)
-                                if in_letter is not None and out_letter is not None:
-                                    text_s = font.render(f"{in_letter}\u2192{out_letter}", True, (255, 255, 255))
-                                else:
-                                    if out_letter:
-                                        text_s = font.render(out_letter, True, (255, 255, 255))
-                                    else:
-                                        text_s = None
-
-                                if text_s is not None:
-                                    tx = (surf.get_width() - text_s.get_width()) // 2
-                                    ty = (surf.get_height() - text_s.get_height()) // 2
-                                    surf.blit(text_s, (tx, ty))
-                            except Exception:
-                                pass
-
-                            screen.blit(surf, (px, py))
-                        else:
-                            s = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
-                            color = (0, 200, 0, 90) if can_place else (200, 0, 0, 90)
-                            s.fill(color)
-                            screen.blit(s, (px, py))
-
-                    # Taladro: asset por dirección o fallback
-                    elif p_machine == MACHINE_DRILL or p_machine == "DRILL":
-                        dir_name = getattr(p_dir, "name", None) if p_dir is not None else None
-                        dir_key = f"DRILL_{dir_name}" if dir_name else "DRILL"
-                        if dir_key in images and images[dir_key] is not None:
-                            surf = images[dir_key].copy()
-                            surf.set_alpha(160 if can_place else 100)
-                            if dir_letter:
-                                try:
-                                    font = pygame.font.SysFont(None, max(12, int(tile_size * 0.5)))
-                                    text_s = font.render(dir_letter, True, (255, 255, 255))
-                                    tx = (surf.get_width() - text_s.get_width()) // 2
-                                    ty = (surf.get_height() - text_s.get_height()) // 2
-                                    surf.blit(text_s, (tx, ty))
-                                except Exception:
-                                    pass
-                            screen.blit(surf, (px, py))
-                        elif "DRILL" in images and images["DRILL"] is not None:
-                            surf = images["DRILL"].copy()
-                            surf.set_alpha(160 if can_place else 100)
-                            if dir_letter:
-                                try:
-                                    font = pygame.font.SysFont(None, max(12, int(tile_size * 0.5)))
-                                    text_s = font.render(dir_letter, True, (255, 255, 255))
-                                    tx = (surf.get_width() - text_s.get_width()) // 2
-                                    ty = (surf.get_height() - text_s.get_height()) // 2
-                                    surf.blit(text_s, (tx, ty))
-                                except Exception:
-                                    pass
-                            screen.blit(surf, (px, py))
-                        else:
-                            s = pygame.Surface((tile_size, tile_size), pygame.SRCALPHA)
-                            color = (0, 200, 0, 90) if can_place else (200, 0, 0, 90)
-                            s.fill(color)
-                            if dir_letter:
-                                try:
-                                    font = pygame.font.SysFont(None, max(12, int(tile_size * 0.5)))
-                                    text_s = font.render(dir_letter, True, (255, 255, 255))
-                                    tx = (s.get_width() - text_s.get_width()) // 2
-                                    ty = (s.get_height() - text_s.get_height()) // 2
-                                    s.blit(text_s, (tx, ty))
-                                except Exception:
-                                    pass
-                            screen.blit(s, (px, py))
-        except Exception as e:
-            print("[ERROR] drawing preview:", e)
-
-    # Nota: la barra de selección se ha eliminado a petición del usuario.
+    # Dibujar barra inferior de selección con imágenes (1,2,3)
+    try:
+        GUI.draw_bottom_toolbar(screen, images, tile_size, list(AVAILABLE_MACHINES), selected_machine)
+    except Exception as e:
+        print("[ERROR] drawing bottom toolbar:", e)
 
     # Dibujar menú contextual si existe
     if context_menu is not None:

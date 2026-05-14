@@ -5,6 +5,7 @@ from build_system import (
     MACHINE_DRILL,
     MACHINE_INVENTORY,
     place_selected_machine,
+    place_selected_machine_with_reason,
     rotate_machine_direction,
     rotate_machine_direction_ccw,
     screen_to_tile,
@@ -27,6 +28,15 @@ def _clear_machine_at(tile, map_manager, conveyor_system=None, drill_system=None
     map_manager.clear_machine(tx, ty)
 
 
+def _format_alert_message(message):
+    if not message:
+        return None
+    text = str(message).strip()
+    if not text:
+        return None
+    return text[:1].upper() + text[1:]
+
+
 def _rotate_belt_or_selection(tile, direction_fn, state, conveyor_system=None, map_manager=None):
     current_direction = state.get("selected_direction", Direction.RIGHT)
     if tile is None or conveyor_system is None:
@@ -43,6 +53,10 @@ def _rotate_belt_or_selection(tile, direction_fn, state, conveyor_system=None, m
     conveyor_system.rotate_belt(tx, ty, new_dir)
     if map_manager is not None:
         map_manager.machine_overrides[(tx, ty)] = {"machine": MACHINE_CONVEYOR, "direction": new_dir.name}
+        try:
+            map_manager.saveMapToJSON()
+        except Exception:
+            pass
 
 
 def process_event(
@@ -71,6 +85,11 @@ def process_event(
 
         if event.key == pygame.K_F3:
             state["debug_mode"] = not state.get("debug_mode", False)
+            return screen, None
+
+        # Toggle overlay de lugares construibles
+        if event.key == pygame.K_p:
+            state["show_placeable"] = not state.get("show_placeable", False)
             return screen, None
 
         # Suprimir: eliminar la máquina/cinta bajo el cursor
@@ -174,7 +193,7 @@ def process_event(
             )
 
             selected_direction = state.get("selected_direction", Direction.RIGHT)
-            place_selected_machine(
+            ok, reason = place_selected_machine_with_reason(
                 map_manager,
                 conveyor_system,
                 tile_x,
@@ -185,6 +204,12 @@ def process_event(
                 selected_in_direction=state.get("selected_in_direction"),
                 inventory_system=inventory_system,
             )
+            if not ok:
+                state["alert"] = _format_alert_message(reason or "No se pudo construir")
+                state["alert_at"] = pygame.time.get_ticks()
+            else:
+                state["alert"] = None
+                state["alert_at"] = None
 
         return screen, None
 

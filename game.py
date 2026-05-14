@@ -33,6 +33,16 @@ def _show_save_slot_dialog():
     
     # Initialize pygame for dialog
     pygame.init()
+    # Intentar asignar el icono de la app al diálogo de selección (no crítico)
+    try:
+        icon_path = os.path.abspath(resource_path("assets/icon.png"))
+        try:
+            pygame.display.set_icon(pygame.image.load(icon_path))
+        except Exception:
+            # algunos backends no permiten set_icon antes de set_mode, ignorar
+            pass
+    except Exception:
+        pass
     
     # Create dialog window
     dialog_width = 500
@@ -252,6 +262,13 @@ def _show_save_slot_dialog():
     return result
 
 
+def _camera_center_tile_from_view(offset_x, offset_y, tile_size, window_width, window_height):
+    """Convierte la vista actual en la tile central que debe persistirse."""
+    center_x = int(round(((window_width / 2) - offset_x) / tile_size))
+    center_y = int(round(((window_height / 2) - offset_y) / tile_size))
+    return center_x, center_y
+
+
 def run():
     if platform.system() == "Windows":
         try:
@@ -332,6 +349,24 @@ def run():
     drill_system = DrillSystem()
     inventory_system = InventorySystem()
 
+    # Reaplicar las estructuras guardadas a los sistemas de runtime.
+    try:
+        map_manager.restore_structures(conveyor_system, drill_system)
+    except Exception:
+        pass
+    try:
+        merged_tiles = map_manager.get_merged_tiles()
+        for (x, y), tile in merged_tiles.items():
+            machine = tile.get("machine")
+            machine_name = machine.get("machine") if isinstance(machine, dict) else machine
+            if machine_name == "INVENTORY":
+                try:
+                    inventory_system.create_inventory(x, y)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     # Asegurar chunks iniciales centrados en la vista actual
     map_manager.ensure_chunks_for_view(offset_x, offset_y, tile_size, window_width, window_height)
     tiles = map_manager.get_merged_tiles()
@@ -353,6 +388,9 @@ def run():
         "selected_machine": MACHINE_CONVEYOR,
         "selected_direction": Direction.RIGHT,
         "selected_in_direction": None,
+        "alert": None,
+        "alert_at": None,
+        "show_placeable": False,
         "debug_mode": False,
     }
     
@@ -465,7 +503,11 @@ def run():
                 "can_place": can_place,
             }
 
-        debug_info = {"preview": preview}
+        debug_info = {
+            "preview": preview,
+            "alert": state.get("alert"),
+            "show_placeable": state.get("show_placeable", False),
+        }
         if state.get("debug_mode", False):
             current_seed = map_manager.base_seed if map_manager.base_seed is not None else BASE_SEED
             debug_info.update({
@@ -490,7 +532,27 @@ def run():
             conveyor_system,
             drill_system,
             state.get("context_menu"),
+            state.get("selected_machine"),
         )
-        
+
+        # Ocultar alertas antiguas después de 3 segundos
+        alert_at = state.get("alert_at")
+        if state.get("alert") and alert_at is not None:
+            if pygame.time.get_ticks() - alert_at > 3000:
+                state["alert"] = None
+                state["alert_at"] = None
+
+    try:
+        if map_manager is not None:
+            player_position = _camera_center_tile_from_view(
+                state.get("offset_x_f", state["offset_x"]),
+                state.get("offset_y_f", state["offset_y"]),
+                state["tile_size"],
+                state["window_width"],
+                state["window_height"],
+            )
+            map_manager.saveMapToJSON(player_position=player_position)
+    except Exception:
+        pass
 
     pygame.quit()

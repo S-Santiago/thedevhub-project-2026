@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
+from enums import Direction
 from settings import (
     MATERIALS,
     DRILL_DEFAULT_CYCLE_SECONDS,
@@ -24,6 +25,8 @@ class DrillMachine:
     buffer_capacity: int = DRILL_OUTPUT_BUFFER_CAPACITY
 
     def __post_init__(self):
+        if self.direction is None:
+            self.direction = Direction.RIGHT
         self.progress_seconds = 0.0
         self.buffer_items = 0
 
@@ -40,6 +43,9 @@ class DrillMachine:
     def _try_output(self, conveyor_system) -> None:
         if self.buffer_items <= 0:
             return
+
+        if self.direction is None:
+            self.direction = Direction.RIGHT
 
         dx, dy = self.direction.value
         target_x = self.x + dx
@@ -63,6 +69,8 @@ class DrillSystem:
         return self._grid.get((x, y))
 
     def create_drill(self, x: int, y: int, direction, mineral_kind: str) -> DrillMachine:
+        if direction is None:
+            direction = Direction.RIGHT
         return DrillMachine(
             x=x,
             y=y,
@@ -70,7 +78,6 @@ class DrillSystem:
             mineral_kind=mineral_kind,
             cycle_seconds=_drill_cycle_seconds(mineral_kind),
         )
-
     def update(self, delta_time: float, conveyor_system) -> None:
         for drill in list(self._grid.values()):
             drill.update(delta_time, conveyor_system)

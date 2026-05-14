@@ -7,6 +7,7 @@ sys.path.insert(0, str(ROOT))
 
 from build_system import MACHINE_CONVEYOR, MACHINE_DRILL
 from enums import Direction
+from game import _camera_center_tile_from_view
 from map_manager import MapManager
 from logic.conveyor import ConveyorSystem
 from logic.drill_system import DrillSystem
@@ -99,3 +100,36 @@ def test_save_and_load_restores_structures(tmp_path):
     assert belt is not None
     assert belt.direction == Direction.RIGHT
     assert drill_system.get_drill(1, 0) is not None
+
+
+def test_world_seed_survives_chunk_generation(tmp_path):
+    manager = MapManager(base_seed=123, chunk_size=4, margin=0, save_root=tmp_path)
+    manager.loadMapFromJSON()
+    assert manager.place_machine(
+        0,
+        0,
+        MACHINE_CONVEYOR,
+        machine_data={"machine": MACHINE_CONVEYOR, "direction": "RIGHT", "in_direction": "UP"},
+    )
+    manager.saveMapToJSON()
+
+    reloaded = MapManager(base_seed=999, chunk_size=4, margin=0, save_root=tmp_path)
+    reloaded.loadMapFromJSON()
+    loaded_seed = reloaded.base_seed
+
+    assert reloaded.get_tile(8, 8, ensure_chunk=True) is not None
+    assert reloaded.base_seed == loaded_seed
+
+    reloaded.saveMapToJSON()
+
+    import json
+
+    with (tmp_path / "partida1" / "meta.json").open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    assert payload["seed"] == loaded_seed
+
+
+def test_camera_center_tile_roundtrip():
+    assert _camera_center_tile_from_view(0, 0, 32, 640, 640) == (10, 10)
+    assert _camera_center_tile_from_view(-64, -96, 32, 640, 640) == (12, 13)

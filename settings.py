@@ -6,10 +6,16 @@ MATERIALS = {
     "COAL": {"cluster": 2, "spawn_prob": 0.20, "cluster_fill_prob": 0.2},
 }
 
+# Compatibility aliases used by asset loading and other modules
+# `ORES` mirrors all material types; `MINERALS` is a subset used for mineral-specific assets.
+ORES = dict(MATERIALS)
+MINERALS = {k: v for k, v in MATERIALS.items() if k in ("COAL", "COPPER", "IRON")}
+
 MACHINES = {
     "DRILL": {}, "ASSEMBLER": {}, 
     "FURNACE": {}, "INSERTER": {},
     "CONVEYOR": {},
+    "CHEST": {},
 }
 
 TERRAINS = {
