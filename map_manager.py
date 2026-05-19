@@ -4,6 +4,8 @@ from datetime import datetime
 from pathlib import Path
 import os
 import tempfile
+import threading
+import time
 
 from enums import Direction
 from asset_manager import default_save_root
@@ -14,7 +16,15 @@ from settings import CHUNK_SIZE, VIEW_CHUNK_MARGIN, BASE_SEED, CHUNK_CACHE_RADIU
 
 
 class MapManager:
-    def __init__(self, base_seed=None, chunk_size=CHUNK_SIZE, margin=VIEW_CHUNK_MARGIN, save_root=None, save_name="partida1"):
+    def __init__(
+        self,
+        base_seed=None,
+        chunk_size=CHUNK_SIZE,
+        margin=VIEW_CHUNK_MARGIN,
+        save_root=None,
+        save_name="partida1",
+        async_persistence=False,
+    ):
         if base_seed is not None:
             self.base_seed = base_seed
         elif BASE_SEED is not None:
@@ -38,6 +48,18 @@ class MapManager:
         self.save_meta = {}
         self.player_position = [0, 0]
         self.persistence_enabled = False
+
+        # Sincronización del pipeline de persistencia
+        self.async_persistence = bool(async_persistence)
+        self._state_lock = threading.Lock()
+        self._save_condition = threading.Condition()
+        self._pending_snapshot = None
+        self._worker_should_stop = False
+        self._worker_is_saving = False
+        self._worker_thread = None
+
+        if self.async_persistence:
+            self._start_persistence_worker()
 
     def _generate_world_seed(self):
         return int(random.randint(0, 2**31 - 1))
@@ -172,6 +194,200 @@ class MapManager:
             "player_position": list(self.player_position),
         }
 
+    def _start_persistence_worker(self):
+        if self._worker_thread is not None and self._worker_thread.is_alive():
+            return
+
+        self._worker_should_stop = False
+        self._worker_thread = threading.Thread(
+            target=self._persistence_worker_loop,
+            name=f"save-worker-{self.save_name}",
+            daemon=True,
+        )
+        self._worker_thread.start()
+
+    def _capture_persistence_snapshot(self, player_position=None):
+        if player_position is not None:
+            self.player_position = [int(player_position[0]), int(player_position[1])]
+
+        with self._state_lock:
+            normalized_overrides = {}
+            for coords, machine_data in self.machine_overrides.items():
+                normalized = self._normalize_machine_data(machine_data)
+                if normalized is not None:
+                    normalized_overrides[coords] = dict(normalized)
+
+            has_content = bool(normalized_overrides)
+            if has_content:
+                if not self.save_meta:
+                    self.save_meta = self._default_meta()
+                else:
+                    self.save_meta.update(
+                        {
+                            "name": self.save_name,
+                            "version": getattr(self, "SAVE_VERSION", "1.0"),
+                            "seed": self.base_seed,
+                            "player_position": list(self.player_position),
+                        }
+                    )
+
+            snapshot = {
+                "save_path": self.save_path,
+                "chunks_path": self.chunks_path,
+                "meta_path": self.meta_path,
+                "save_name": self.save_name,
+                "base_seed": self.base_seed,
+                "chunk_size": self.chunk_size,
+                "player_position": list(self.player_position),
+                "save_meta": dict(self.save_meta) if has_content else {},
+                "machine_overrides": normalized_overrides,
+                "has_content": has_content,
+            }
+
+        return snapshot
+
+    def _queue_snapshot_for_worker(self, snapshot):
+        with self._save_condition:
+            # Cola coalescente: siempre nos quedamos solo con el snapshot más reciente.
+            self._pending_snapshot = snapshot
+            self._save_condition.notify_all()
+
+    def _persistence_worker_loop(self):
+        while True:
+            with self._save_condition:
+                while self._pending_snapshot is None and not self._worker_should_stop:
+                    self._save_condition.wait()
+
+                if self._worker_should_stop and self._pending_snapshot is None:
+                    return
+
+                snapshot = self._pending_snapshot
+                self._pending_snapshot = None
+                self._worker_is_saving = True
+
+            try:
+                self._write_snapshot_to_disk(snapshot)
+            except Exception:
+                # Nunca tumbar el worker por una excepción puntual de IO.
+                pass
+            finally:
+                with self._save_condition:
+                    self._worker_is_saving = False
+                    self._save_condition.notify_all()
+
+    def _chunk_payload_from_snapshot(self, cx, cy, snapshot):
+        buildings = []
+        base_x = cx * snapshot["chunk_size"]
+        base_y = cy * snapshot["chunk_size"]
+
+        for (abs_x, abs_y), machine_data in snapshot["machine_overrides"].items():
+            if not (base_x <= abs_x < base_x + snapshot["chunk_size"]):
+                continue
+            if not (base_y <= abs_y < base_y + snapshot["chunk_size"]):
+                continue
+
+            building = dict(machine_data)
+            building["tile"] = self._tile_key(abs_x - base_x, abs_y - base_y)
+            buildings.append(building)
+
+        return {
+            "coords": [cx, cy],
+            "seed": snapshot["base_seed"],
+            "buildings": buildings,
+        }
+
+    def _coords_from_chunk_dir_name(self, dir_name):
+        try:
+            raw_x, raw_y = dir_name.split("_", 1)
+            return int(raw_x), int(raw_y)
+        except Exception:
+            return None
+
+    def _write_snapshot_to_disk(self, snapshot):
+        if not snapshot.get("has_content"):
+            return False
+
+        chunks_path = snapshot["chunks_path"]
+        meta_path = snapshot["meta_path"]
+
+        chunks_path.mkdir(parents=True, exist_ok=True)
+        self._atomic_write_json(meta_path, snapshot["save_meta"])
+
+        chunk_coords = set()
+        chunk_size = snapshot["chunk_size"]
+        for (abs_x, abs_y) in snapshot["machine_overrides"].keys():
+            cx = abs_x // chunk_size
+            cy = abs_y // chunk_size
+            chunk_coords.add((cx, cy))
+
+        for cx, cy in chunk_coords:
+            chunk_dir = chunks_path / self._chunk_key(cx, cy)
+            chunk_dir.mkdir(parents=True, exist_ok=True)
+            payload = self._chunk_payload_from_snapshot(cx, cy, snapshot)
+            self._atomic_write_json(chunk_dir / "data.json", payload)
+
+        existing_coords = set()
+        if chunks_path.exists():
+            for chunk_dir in chunks_path.iterdir():
+                if not chunk_dir.is_dir():
+                    continue
+                coords = self._coords_from_chunk_dir_name(chunk_dir.name)
+                if coords is not None:
+                    existing_coords.add(coords)
+
+        stale_coords = existing_coords - chunk_coords
+        for cx, cy in stale_coords:
+            stale_file = self._chunk_file(cx, cy)
+            if stale_file.exists():
+                try:
+                    stale_file.unlink()
+                except Exception:
+                    pass
+            try:
+                self._chunk_dir(cx, cy).rmdir()
+            except Exception:
+                pass
+
+        self._cleanup_empty_chunks()
+
+        with self._state_lock:
+            self.persistence_enabled = True
+
+        return True
+
+    def flush_pending_saves(self, timeout=None):
+        if not self.async_persistence:
+            return True
+
+        with self._save_condition:
+            if timeout is None:
+                while self._pending_snapshot is not None or self._worker_is_saving:
+                    self._save_condition.wait()
+                return True
+
+            end_time = time.monotonic() + float(timeout)
+            while self._pending_snapshot is not None or self._worker_is_saving:
+                remaining = end_time - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._save_condition.wait(timeout=remaining)
+            return True
+
+    def shutdown_persistence_worker(self, timeout=2.0):
+        if not self.async_persistence:
+            return True
+
+        self.flush_pending_saves(timeout=timeout)
+        with self._save_condition:
+            self._worker_should_stop = True
+            self._save_condition.notify_all()
+
+        thread = self._worker_thread
+        if thread is not None:
+            thread.join(timeout=timeout)
+
+        return True
+
     def _atomic_write_json(self, target_path: Path, data) -> None:
         """Escribe JSON de forma atómica en el mismo directorio.
 
@@ -222,6 +438,11 @@ class MapManager:
 
     def delete_save(self):
         """Elimina completamente la partida incluyendo meta.json y chunks"""
+        try:
+            self.flush_pending_saves(timeout=2.0)
+        except Exception:
+            pass
+
         if self.meta_path.exists():
             self.meta_path.unlink()
         
@@ -287,59 +508,17 @@ class MapManager:
         return False
 
     def saveMapToJSON(self, chunk_coords=None, player_position=None, inventory=None):
-        if player_position is not None:
-            self.player_position = [int(player_position[0]), int(player_position[1])]
+        snapshot = self._capture_persistence_snapshot(player_position=player_position)
 
-        # Si no hay contenido persistible (p. ej. ninguna máquina), no crear ni escribir saves.
-        # Esto evita crear la carpeta de la partida ni el meta.json hasta que haya algo que guardar.
-        if not self._has_persistable_content():
+        # Sin máquinas no se crea/actualiza el save para mantener el comportamiento actual.
+        if not snapshot.get("has_content"):
             return False
 
-        # Guardar meta.json para preservar la semilla y posición del jugador
-        if not self.save_meta:
-            self.save_meta = self._default_meta()
-        else:
-            self.save_meta.update(
-                {
-                    "name": self.save_name,
-                    "version": getattr(self, "SAVE_VERSION", "1.0"),
-                    "seed": self.base_seed,
-                    "player_position": list(self.player_position),
-                }
-            )
+        if self.async_persistence:
+            self._queue_snapshot_for_worker(snapshot)
+            return True
 
-        self._write_meta()
-
-        # Guardar solo los chunks que tengan máquinas
-        if chunk_coords is None:
-            # Recopilar todos los chunks: los cargados en memoria + los que existen en disco
-            chunk_coords = list(self.chunks.keys())
-            
-            # Asegurar que también se guardan los chunks que existen en disco pero no están en memoria
-            if self.chunks_path.exists():
-                for chunk_file in self.chunks_path.rglob("data.json"):
-                    try:
-                        with chunk_file.open("r", encoding="utf-8") as handle:
-                            payload = json.load(handle)
-                        raw = payload.get("coords", [0, 0])
-                        try:
-                            coords = (int(raw[0]), int(raw[1]))
-                        except Exception:
-                            # Malformed coords en disco, ignorar
-                            continue
-                        if coords not in chunk_coords:
-                            chunk_coords.append(coords)
-                    except Exception:
-                        pass
-
-        for cx, cy in chunk_coords:
-            self._save_chunk(cx, cy)
-
-        # Limpiar chunks vacíos que no se guardaron
-        self._cleanup_empty_chunks()
-
-        self.persistence_enabled = True
-        return True
+        return self._write_snapshot_to_disk(snapshot)
 
     def loadMapFromJSON(self, save_name=None):
         if save_name is not None:

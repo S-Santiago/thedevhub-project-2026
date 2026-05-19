@@ -60,6 +60,22 @@ def generate_bell(freq1, freq2, duration=0.15, sample_rate=44100, amplitude=1000
     wave_data = (amplitude * wave_data * envelope).astype(np.int16)
     return add_fast_envelope(wave_data, sample_rate)
 
+def generate_tick(frequency=1000, duration=0.035, sample_rate=44100, amplitude=3500):
+    """
+    Genera un 'tic' o 'clink' muy corto y sutil.
+    Diseñado específicamente para acciones de alta repetición (como extraer minerales).
+    """
+    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+    
+    # Onda senoidal simple para un tono limpio
+    wave_data = np.sin(2 * np.pi * frequency * t)
+    
+    # Envolvente extremadamente rápida (-40) para que sea un toque percusivo muy breve, 
+    # sin "cola" que se acumule en el cerebro del jugador.
+    envelope = np.exp(-40 * t / duration) 
+    
+    wave_data = (amplitude * wave_data * envelope).astype(np.int16)
+    return add_fast_envelope(wave_data, sample_rate)
 
 def save_wav(filename, wave_data, sample_rate=44100):
     """Guarda un array de datos de onda como archivo WAV."""
@@ -70,6 +86,23 @@ def save_wav(filename, wave_data, sample_rate=44100):
         wav_file.writeframes(wave_data.tobytes())
     print(f"✓ Guardado: {filename.name}")
 
+def generate_error_buzzer(frequency=120, duration=0.15, sample_rate=44100, amplitude=8000):
+    """
+    Genera un zumbido de error clásico y áspero usando una onda cuadrada.
+    Ideal para 'No puedes construir aquí' por colisión.
+    """
+    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+    
+    # El truco np.sign convierte la curva suave del seno en saltos bruscos de -1 a 1 (onda cuadrada)
+    wave_data = np.sign(np.sin(2 * np.pi * frequency * t))
+    
+    # Envolvente plana que cae rápido al final, para que suene como un timbre seco
+    envelope = np.ones_like(t)
+    decay_len = int(len(t) * 0.3) # El último 30% del sonido es para apagarse
+    envelope[-decay_len:] = np.linspace(1, 0, decay_len)
+    
+    wave_data = (amplitude * wave_data * envelope).astype(np.int16)
+    return add_fast_envelope(wave_data, sample_rate)
 
 def create_sound_files():
     """Genera sonidos diseñados específicamente para dar una respuesta táctil y satisfactoria."""
@@ -113,6 +146,17 @@ def create_sound_files():
     # DELETE genérico: Pop inverso
     wave_data = generate_pop(500, 400, duration=0.08, amplitude=9000)
     save_wav(sounds_dir / "machine_deleted.wav", wave_data)
+    
+    # === EXTRACTION (Acción muy repetitiva) ===
+    # Mineral extraído: Un "clink" corto, agudo pero de muy bajo volumen (3500 vs los 12000 del Pop)
+    wave_data = generate_tick(frequency=900, duration=0.035, amplitude=3500)
+    save_wav(sounds_dir / "mineral_extracted.wav", wave_data)
+    
+    # === ERRORES / DENEGADO ===
+    
+    # Error fuerte: Zumbido áspero para colisiones o bloqueos
+    wave_data = generate_error_buzzer(frequency=110, duration=0.15, amplitude=8000)
+    save_wav(sounds_dir / "error_blocked.wav", wave_data)
     
     print("\n✓ ¡Listo!")
 

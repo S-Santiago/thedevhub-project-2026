@@ -300,15 +300,4 @@ def draw_bottom_toolbar(screen, images: dict, tile_size: int, machines: list, se
 			pass
 
 		_toolbar_rects.append({"name": name, "rect": (rect[0], rect[1], rect[2], rect[3])})
-
-	# Small label left of bar: hint for keys
-	try:
-		hint_font = pygame.font.SysFont(None, 16)
-		hint_s = hint_font.render("1-3: Selección rápida", True, (200, 200, 200))
-		screen.blit(hint_s, (max(8, start_x - 140), y + icon_size // 2 - hint_s.get_height() // 2))
-	except Exception:
-		pass
-
-
-
   

@@ -62,10 +62,23 @@ def _load_directory_assets(base_name: str, assets_dir: Path, category_name: str)
     for child in sorted(assets_dir.iterdir()):
         if not child.is_file() or child.suffix.lower() not in (".png", ".jpg", ".jpeg"):
             continue
+        # Normalizar el nombre del fichero para producir claves consistentes.
+        # Ejemplos de ficheros esperados:
+        #  - DOWN.png -> clave: BASE_DOWN
+        #  - DRILL-DOWN.png -> clave: DRILL_DOWN
+        child_name = child.stem.upper()
+        # Si el fichero contiene el nombre base como prefijo (p.ej. "DRILL-DOWN"), eliminarlo.
+        suffix = child_name
+        prefix_upper = base_name.upper()
+        if suffix.startswith(prefix_upper):
+            # quitar el prefijo y cualquier guion/underscore residual
+            suffix = suffix[len(prefix_upper):]
+            suffix = suffix.lstrip("-_ ")
+
         if category_name == "MINERALS":
-            key = f"MINERAL_{child.stem.upper()}"
+            key = f"MINERAL_{suffix or prefix_upper}"
         else:
-            key = f"{base_name}_{child.stem.upper()}"
+            key = f"{base_name}_{suffix or prefix_upper}"
         _register_asset(key, _load_image(child), fallback_color)
 
     base_key = f"MINERAL_{base_name}" if category_name == "MINERALS" else base_name

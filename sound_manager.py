@@ -28,6 +28,10 @@ class SoundManager:
         Args:
             assets_dir: Directorio base de assets (por defecto "assets")
         """
+        # Asegurar que pygame.mixer está inicializado
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+        
         assets_path = Path(assets_dir)
         if not assets_path.is_absolute():
             assets_path = Path(resource_path(str(assets_path)))
@@ -114,13 +118,18 @@ class SoundManager:
         # Aplicar volumen maestro
         sound.set_volume(self.master_volume)
         
-        # Aplicar pitch si pygame lo soporta (versiones recientes)
-        # Para versiones más viejas, usar playback speed con pygame-mixer
+        # Reproducir sonido con pitch ajustado (pygame-ce 2.5+ soporta set_speed)
         try:
-            # pygame 2.1+ soporta pitch, pero es complicado
-            # Por ahora, reproducir el sonido normalmente
-            # El pitch se puede controlar alterando la frecuencia del mixer
-            sound.play()
+            channel = sound.play()
+            
+            # Aplicar pitch mediante set_speed si está disponible
+            if pitch != 1.0 and hasattr(channel, 'set_speed'):
+                try:
+                    channel.set_speed(pitch)
+                except (AttributeError, RuntimeError):
+                    # Si set_speed no está disponible o falla, continuar sin pitch
+                    pass
+            
             return True
         except Exception as e:
             print(f"Error al reproducir {sound_name}: {e}")
@@ -190,3 +199,9 @@ def play_delete_sound(machine_type):
     """Conveniencia: reproduce sonido de eliminación."""
     sm = get_sound_manager()
     return sm.play_delete_sound(machine_type)
+
+
+def play_error_blocked_sound():
+    """Conveniencia: reproduce sonido de error al construir en un tile bloqueado."""
+    sm = get_sound_manager()
+    return sm.play_machine_sound("error", "blocked")
