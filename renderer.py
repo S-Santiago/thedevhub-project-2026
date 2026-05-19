@@ -86,6 +86,28 @@ def _select_machine_surface(images, base_name: str, direction_name: str = None):
     return None
 
 
+def _is_chest_like_machine(machine_data) -> bool:
+    if not machine_data:
+        return False
+
+    machine_name = None
+    asset_key = None
+    if isinstance(machine_data, dict):
+        machine_name = machine_data.get("machine")
+        asset_key = machine_data.get("asset_key")
+    else:
+        machine_name = machine_data
+
+    machine_name_s = str(machine_name).upper() if machine_name is not None else ""
+    asset_key_s = str(asset_key).upper() if asset_key is not None else ""
+
+    if machine_name_s in ("INVENTORY", "CHEST"):
+        return True
+    if "CHEST" in asset_key_s or "COFRE" in asset_key_s:
+        return True
+    return False
+
+
 def render_frame(
     screen,
     tiles,
@@ -100,6 +122,8 @@ def render_frame(
     selected_machine=None,
 ):
     screen.fill((0, 0, 0))  # Limpiar pantalla cada frame
+    conveyor_item_draw_calls = []
+    conveyor_item_under_chest_draw_calls = []
 
     for (x, y), data in tiles.items():
         pos_x = offset_x + (x * tile_size)
@@ -156,7 +180,7 @@ def render_frame(
             else:
                 pygame.draw.rect(screen, (100, 100, 100), (pos_x, pos_y, tile_size, tile_size), 2)
             
-            # Dibujar el material moviéndose encima de la cinta
+            # Encolamos los minerales para dibujarlos al final del mundo y evitar que otras capas los tapen.
             if belt.item is not None:
                 pixel_pos = belt.pixel_position(tile_size)
                 if pixel_pos:
@@ -164,11 +188,30 @@ def render_frame(
                     item_y = offset_y + pixel_pos[1]
                     
                     kind = belt.item.kind
-                    if kind in images and images[kind] is not None:
+                    item_surface = None
+                    for asset_key in (f"MINERAL_{kind}", kind):
+                        if asset_key in images and images[asset_key] is not None:
+                            item_surface = images[asset_key]
+                            break
+
+                    if item_surface is not None:
                         # Dibujamos el material un poco más pequeño para que quepa en la cinta
-                        scaled_item = pygame.transform.scale(images[kind], (int(tile_size * 0.6), int(tile_size * 0.6)))
+                        scaled_item = pygame.transform.scale(item_surface, (int(tile_size * 0.6), int(tile_size * 0.6)))
                         # Centramos el ítem
-                        screen.blit(scaled_item, (item_x + tile_size * 0.2, item_y + tile_size * 0.2))
+                        item_draw_call = (scaled_item, (item_x + tile_size * 0.2, item_y + tile_size * 0.2))
+
+                        # Si el próximo tile es un cofre/inventario, el mineral se dibuja antes
+                        # para que el cofre quede visualmente por encima (efecto "guardado").
+                        direction = getattr(belt, "direction", None)
+                        if direction is not None:
+                            dx, dy = direction.value
+                            next_tile_data = tiles.get((cx + dx, cy + dy))
+                            if _is_chest_like_machine(next_tile_data.get("machine") if next_tile_data else None):
+                                conveyor_item_under_chest_draw_calls.append(item_draw_call)
+                            else:
+                                conveyor_item_draw_calls.append(item_draw_call)
+                        else:
+                            conveyor_item_draw_calls.append(item_draw_call)
 
     # Dibujar perforadoras
     if drill_system is not None:
@@ -192,6 +235,10 @@ def render_frame(
                     (int(pos_x + tile_size * 0.85), int(pos_y + tile_size * 0.15)),
                     radius,
                 )
+
+    # Ítems que van hacia cofre: se pintan antes de la capa de cofres para que estos queden encima.
+    for item_surface, item_pos in conveyor_item_under_chest_draw_calls:
+        screen.blit(item_surface, item_pos)
 
     # Dibujar máquinas genéricas (p.ej. cofres / inventarios) a partir de tile['machine']
     try:
@@ -379,6 +426,10 @@ def render_frame(
                             screen.blit(s, (px, py))
         except Exception as e:
             print("[ERROR] drawing preview:", e)
+
+    # Dibujar minerales de cinta al final para mantenerlos siempre en la capa superior del mundo.
+    for item_surface, item_pos in conveyor_item_draw_calls:
+        screen.blit(item_surface, item_pos)
 
     # Overlay de debug
     if debug is not None and debug.get("fps") is not None:

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict, Tuple
+import random
 
 from enums import Direction
 from settings import (
@@ -7,6 +8,8 @@ from settings import (
     DRILL_DEFAULT_CYCLE_SECONDS,
     DRILL_OUTPUT_BUFFER_CAPACITY,
 )
+from sound_manager import get_sound_manager
+from audio_culling import get_audio_culling_manager
 
 
 def _drill_cycle_seconds(mineral_kind: str) -> float:
@@ -27,8 +30,12 @@ class DrillMachine:
     def __post_init__(self):
         if self.direction is None:
             self.direction = Direction.RIGHT
-        self.progress_seconds = 0.0
+        # Desincronizar drills con un offset aleatorio en el ciclo (0 a cycle_seconds)
+        # Esto evita que todos ejecuten en el mismo frame y causa picos de sonido/procesamiento
+        self.progress_seconds = random.uniform(0.0, self.cycle_seconds)
         self.buffer_items = 0
+        # Flag para audio culling: indica si este drill está audible en la cámara
+        self.is_audible = True
 
     def update(self, delta_time: float, conveyor_system) -> None:
         if self.buffer_items < self.buffer_capacity:
@@ -53,6 +60,15 @@ class DrillMachine:
 
         if conveyor_system.place_material(target_x, target_y, self.mineral_kind):
             self.buffer_items -= 1
+            # Solo reproducir sonido si el drill está dentro del viewport de la cámara (Audio Culling)
+            if self.is_audible:
+                try:
+                    sound_manager = get_sound_manager()
+                    pitch = random.uniform(0.9, 1.1)  # Variar pitch para evitar monotonía
+                    sound_manager.play_machine_sound("mineral", "extracted", pitch=pitch)
+                except Exception:
+                    # Si hay error al reproducir sonido, continuar sin fallar
+                    pass
 
 
 class DrillSystem:
@@ -81,6 +97,17 @@ class DrillSystem:
     def update(self, delta_time: float, conveyor_system) -> None:
         for drill in list(self._grid.values()):
             drill.update(delta_time, conveyor_system)
+
+    def update_audibility(self) -> None:
+        """
+        Actualiza el estado de audibilidad de todos los drills según el Audio Culling Manager.
+        
+        Debe llamarse después de actualizar el frustum en AudioCullingManager.
+        Operación O(n) pero muy rápida: solo comparaciones de enteros.
+        """
+        audio_culling = get_audio_culling_manager()
+        for (x, y), drill in self._grid.items():
+            drill.is_audible = audio_culling.is_audible(x, y)
 
     def __repr__(self) -> str:
         return f"DrillSystem({len(self._grid)} drills)"

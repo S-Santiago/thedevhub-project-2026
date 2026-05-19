@@ -7,9 +7,9 @@ MATERIALS = {
 }
 
 # Compatibility aliases used by asset loading and other modules
-# `ORES` mirrors all material types; `MINERALS` is a subset used for mineral-specific assets.
+# `ORES` mirrors all material types; `MINERALS` is the subset used for mineral-specific assets.
 ORES = dict(MATERIALS)
-MINERALS = {k: v for k, v in MATERIALS.items() if k in ("COAL", "COPPER", "IRON")}
+MINERALS = dict(MATERIALS)
 
 MACHINES = {
     "DRILL": {}, "ASSEMBLER": {}, 

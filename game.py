@@ -23,8 +23,9 @@ from input_handler import process_event
 from logic.conveyor import ConveyorSystem
 from logic.drill_system import DrillSystem
 from logic.inventory import InventorySystem
-from enums import Direction
 
+from enums import Direction
+from audio_culling import get_audio_culling_manager
 
 def _show_save_slot_dialog():
     """Show save slot dialog using pygame. Returns None if user closes the dialog."""
@@ -72,6 +73,34 @@ def _show_save_slot_dialog():
         """Check if a slot has a saved game"""
         meta_path = save_root / slot_name / "meta.json"
         return meta_path.exists()
+
+    def _human_size(num_bytes):
+        """Format bytes as a compact human-readable string."""
+        units = ["B", "KB", "MB", "GB"]
+        size = float(max(0, int(num_bytes)))
+        idx = 0
+        while size >= 1024.0 and idx < len(units) - 1:
+            size /= 1024.0
+            idx += 1
+        if idx == 0:
+            return f"{int(size)} {units[idx]}"
+        return f"{size:.1f} {units[idx]}"
+
+    def _slot_disk_usage_text(slot_name):
+        """Return disk usage text for a save slot, or 'Vacio' if empty."""
+        slot_path = save_root / slot_name
+        if not slot_path.exists() or not _slot_has_save(slot_name):
+            return "Vacio"
+
+        total_bytes = 0
+        try:
+            for file_path in slot_path.rglob("*"):
+                if file_path.is_file():
+                    total_bytes += file_path.stat().st_size
+        except Exception:
+            return "Vacio"
+
+        return _human_size(total_bytes)
     
     def _delete_save(slot_name):
         """Delete all content from a save slot"""
@@ -147,7 +176,6 @@ def _show_save_slot_dialog():
         buttons.append(button)
         
         # Delete button below each slot
-        has_save = _slot_has_save(slot)
         delete_btn = DeleteButton(
             x + (button_width - delete_button_width) // 2,
             start_y + button_height + 5,
@@ -156,7 +184,7 @@ def _show_save_slot_dialog():
             "Borrar",
             slot
         )
-        delete_buttons.append((delete_btn, has_save))
+        delete_buttons.append(delete_btn)
     
     # Continue button
     continue_button = Button(
@@ -185,8 +213,8 @@ def _show_save_slot_dialog():
                         selected_slot[0] = button.slot
                 
                 # Check delete buttons
-                for delete_btn, has_save in delete_buttons:
-                    if has_save and delete_btn.is_clicked(mouse_pos):
+                for delete_btn in delete_buttons:
+                    if _slot_has_save(delete_btn.slot) and delete_btn.is_clicked(mouse_pos):
                         _delete_save(delete_btn.slot)
                 
                 # Check continue button
@@ -215,8 +243,11 @@ def _show_save_slot_dialog():
         for button in buttons:
             button.update(mouse_pos)
         continue_button.update(mouse_pos)
-        for delete_btn, _ in delete_buttons:
-            delete_btn.update(mouse_pos)
+        for delete_btn in delete_buttons:
+            if _slot_has_save(delete_btn.slot):
+                delete_btn.update(mouse_pos)
+            else:
+                delete_btn.hovered = False
         
         # Draw
         dialog_surface.fill(LIGHT_GRAY)
@@ -235,14 +266,14 @@ def _show_save_slot_dialog():
         for i, button in enumerate(buttons):
             button.draw(dialog_surface)
             has_save = _slot_has_save(button.slot)
-            status_text = "📁" if has_save else "Vacío"
+            status_text = _slot_disk_usage_text(button.slot) if has_save else "Vacio"
             status_surface = font_small.render(status_text, True, BLUE if has_save else GRAY)
-            status_rect = status_surface.get_rect(center=(button.rect.centerx, button.rect.bottom + 30))
+            status_rect = status_surface.get_rect(center=(button.rect.centerx, button.rect.bottom + 40))
             dialog_surface.blit(status_surface, status_rect)
         
         # Draw delete buttons (only if slot has save)
-        for delete_btn, has_save in delete_buttons:
-            if has_save:
+        for delete_btn in delete_buttons:
+            if _slot_has_save(delete_btn.slot):
                 delete_btn.draw(dialog_surface)
         
         continue_button.draw(dialog_surface)
@@ -330,7 +361,7 @@ def run():
 
     # Carga de datos (ahora por chunks)
     save_root = default_save_root()
-    map_manager = MapManager(save_root=save_root, save_name=selected_save_name)
+    map_manager = MapManager(save_root=save_root, save_name=selected_save_name, async_persistence=True)
     map_manager.loadMapFromJSON()
     # Centrar la cámara en la posición guardada (player_position almacena la tile central)
     try:
@@ -448,6 +479,17 @@ def run():
         conveyor_system.update(dt, map_manager, inventory_system)
         drill_system.update(dt, conveyor_system)
 
+        # Audio Culling: actualizar frustum y audibilidad de drills
+        audio_culling_manager = get_audio_culling_manager()
+        audio_culling_manager.update_frustum(
+            state["offset_x"],
+            state["offset_y"],
+            state["tile_size"],
+            state["window_width"],
+            state["window_height"]
+        )
+        drill_system.update_audibility()
+
         # Preparar información de debug
         mx, my = pygame.mouse.get_pos()
         wx = mx - state["offset_x"]
@@ -552,6 +594,8 @@ def run():
                 state["window_height"],
             )
             map_manager.saveMapToJSON(player_position=player_position)
+            map_manager.flush_pending_saves(timeout=2.0)
+            map_manager.shutdown_persistence_worker(timeout=2.0)
     except Exception:
         pass
 

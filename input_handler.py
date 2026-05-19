@@ -207,6 +207,12 @@ def process_event(
             if not ok:
                 state["alert"] = _format_alert_message(reason or "No se pudo construir")
                 state["alert_at"] = pygame.time.get_ticks()
+                try:
+                    from sound_manager import play_error_blocked_sound
+
+                    play_error_blocked_sound()
+                except Exception:
+                    pass
             else:
                 state["alert"] = None
                 state["alert_at"] = None
